@@ -1,0 +1,26 @@
+# Personal / internal docs
+ROADMAP.md
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node (if tests are added later)
+node_modules/
+package-lock.json
+
+# Foundry (if tests are added later)
+out/
+cache/
+broadcast/
+
+# Environment
+.env
+.env.*
