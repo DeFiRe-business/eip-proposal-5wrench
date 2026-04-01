@@ -15,29 +15,9 @@ Current self-custody wallets have a fundamental design flaw: **whoever controls 
 
 A smart contract wallet standard that works like a **bank vault with delayed opening**:
 
-```
-┌─────────────────────────────────────────────────┐
-│           Coercion-Resistant Vault               │
-│                                                  │
-│  ┌──────────────┐    ┌────────────────────────┐  │
-│  │  Hot Balance  │    │      Cold Vault         │  │
-│  │              │    │                        │  │
-│  │  Immediate    │    │  Locked funds (95%)     │  │
-│  │  spending     │    │                        │  │
-│  │  up to limit  │    │  Unlock via:           │  │
-│  │  (e.g. 0.5   │    │  • Timelock (24-72h)   │  │
-│  │   ETH/day)   │    │  • Multisig (2-of-3)   │  │
-│  │              │    │                        │  │
-│  │  ✅ No delay  │    │  ❌ Cancellable during  │  │
-│  │              │    │     waiting period      │  │
-│  └──────────────┘    └────────────────────────┘  │
-│                                                  │
-│  Supports: ETH + any ERC-20 token                │
-│  Each asset has independent spending limits       │
-└─────────────────────────────────────────────────┘
-```
-
-**Under coercion, the victim can truthfully say:** *"I can only send you 0.5 ETH and 100 USDC right now. The rest is locked in a timelock for 72 hours and I physically cannot access it faster. You can verify this on-chain."*
+<p align="center">
+  <img src="./assets/vault-diagram.svg" alt="Coercion-Resistant Vault Architecture" width="100%"/>
+</p>
 
 ### Why this beats existing approaches
 
@@ -64,7 +44,6 @@ A smart contract wallet standard that works like a **bank vault with delayed ope
 |---|---|
 | [`ERC-coercion-resistant-vault.md`](./ERC-coercion-resistant-vault.md) | Full ERC proposal draft following EIP-1 template |
 | [`CoercionResistantVault.sol`](./CoercionResistantVault.sol) | Reference implementation in Solidity 0.8.20 (ETH + ERC-20) |
-| [`ROADMAP.md`](./ROADMAP.md) | Step-by-step guide to formal EIP submission |
 
 ## Architecture
 
