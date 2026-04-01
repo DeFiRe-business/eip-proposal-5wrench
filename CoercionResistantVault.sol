@@ -9,6 +9,47 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function approve(address spender, uint256 amount) external returns (bool);
+}
+
+/**
+ * @title PackedUserOperation
+ * @notice ERC-4337 v0.7 packed user operation struct.
+ */
+struct PackedUserOperation {
+    address sender;
+    uint256 nonce;
+    bytes initCode;
+    bytes callData;
+    bytes32 accountGasLimits;
+    uint256 preVerificationGas;
+    bytes32 gasFees;
+    bytes paymasterAndData;
+    bytes signature;
+}
+
+/**
+ * @title IAccount
+ * @notice Minimal ERC-4337 account interface (v0.7).
+ */
+interface IAccount {
+    function validateUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 missingAccountFunds
+    ) external returns (uint256 validationData);
+}
+
+/**
+ * @title IEntryPoint
+ * @notice Minimal EntryPoint interface for deposits.
+ */
+interface IEntryPoint {
+    function depositTo(address account) external payable;
+    function getDepositInfo(address account)
+        external
+        view
+        returns (uint112 deposit, bool staked, uint112 stake, uint32 unstakeDelaySec, uint48 withdrawTime);
 }
 
 /**
@@ -25,7 +66,7 @@ interface IERC20 {
  *      cash from the drawer (hot balance), but the vault door is on a timer
  *      (timelock) or requires two keys turned simultaneously (multisig).
  */
-contract CoercionResistantVault {
+contract CoercionResistantVault is IAccount {
 
     // ══════════════════════════════════════════════
     //  Types
@@ -64,6 +105,19 @@ contract CoercionResistantVault {
     address public constant ETH = address(0);
 
     // ══════════════════════════════════════════════
+    //  ERC-4337
+    // ══════════════════════════════════════════════
+
+    /// @notice The canonical ERC-4337 v0.7 EntryPoint.
+    IEntryPoint public immutable entryPoint;
+
+    /// @notice Validation success (SIG_VALIDATION_SUCCESS in ERC-4337).
+    uint256 internal constant SIG_VALIDATION_SUCCESS = 0;
+
+    /// @notice Validation failure (SIG_VALIDATION_FAILED in ERC-4337).
+    uint256 internal constant SIG_VALIDATION_FAILED = 1;
+
+    // ══════════════════════════════════════════════
     //  State
     // ══════════════════════════════════════════════
 
@@ -89,11 +143,15 @@ contract CoercionResistantVault {
     address[] public guardianList;
     uint256 public multisigThreshold;
 
+    // --- Whitelisted DeFi targets ---
+    mapping(address => bool) public whitelistedTargets;
+
     // --- Pending configuration changes (timelocked) ---
     PendingConfigChange public pendingLimitChange;
     PendingConfigChange public pendingTimelockChange;
     mapping(address => PendingConfigChange) public pendingGuardianChange;
     mapping(address => PendingConfigChange) public pendingTokenLimitChange;
+    mapping(address => PendingConfigChange) public pendingWhitelistChange;
 
     // ══════════════════════════════════════════════
     //  Events
@@ -119,6 +177,12 @@ contract CoercionResistantVault {
     event GuardianChanged(address indexed guardian, bool added);
     event ConfigChangeScheduled(string configType, uint256 effectiveTime);
     event ConfigChangeCancelled(string configType);
+    event TokenApproval(address indexed token, address indexed spender, uint256 amount);
+    event Executed(address indexed target, uint256 value, bytes data, bytes result);
+    event BatchExecuted(uint256 count);
+    event TargetWhitelisted(address indexed target, bool allowed);
+    event WhitelistChangeScheduled(address indexed target, uint256 effectiveTime);
+    event WhitelistChangeCancelled(address indexed target);
 
     // ══════════════════════════════════════════════
     //  Errors
@@ -142,13 +206,27 @@ contract CoercionResistantVault {
     error InvalidDuration();
     error TokenNotConfigured(address token);
     error TokenTransferFailed(address token);
+    error TargetNotWhitelisted(address target);
+    error SelfCallNotAllowed();
+    error BatchLengthMismatch();
+    error ExecutionFailed(address target, bytes data);
+    error SpenderNotWhitelisted(address spender);
+    error TokenApprovalFailed(address token, address spender);
+    error NotEntryPoint();
+    error NotOwnerOrEntryPoint();
 
     // ══════════════════════════════════════════════
     //  Modifiers
     // ══════════════════════════════════════════════
 
     modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
+        if (msg.sender != owner && msg.sender != address(entryPoint))
+            revert NotOwnerOrEntryPoint();
+        _;
+    }
+
+    modifier onlyEntryPoint() {
+        if (msg.sender != address(entryPoint)) revert NotEntryPoint();
         _;
     }
 
@@ -168,7 +246,9 @@ contract CoercionResistantVault {
     // ══════════════════════════════════════════════
 
     /**
-     * @param _owner           The vault owner address.
+     * @param _entryPoint      The ERC-4337 EntryPoint address (canonical v0.7:
+     *                         0x0000000071727De22E5E9d8BAf0edAc6f37da032).
+     * @param _owner           The vault owner address (the signer for UserOps).
      * @param _spendingLimit   Initial ETH hot spending limit per epoch (in wei).
      * @param _epochDuration   Epoch duration in seconds (e.g., 86400 for 24h).
      * @param _timelockDuration Timelock delay for cold withdrawals in seconds.
@@ -176,6 +256,7 @@ contract CoercionResistantVault {
      * @param _multisigThreshold Number of guardian approvals for instant withdrawal.
      */
     constructor(
+        IEntryPoint _entryPoint,
         address _owner,
         uint256 _spendingLimit,
         uint256 _epochDuration,
@@ -183,7 +264,9 @@ contract CoercionResistantVault {
         address[] memory _guardians,
         uint256 _multisigThreshold
     ) {
+        if (address(_entryPoint) == address(0)) revert ZeroAddress();
         if (_owner == address(0)) revert ZeroAddress();
+        entryPoint = _entryPoint;
         if (_epochDuration == 0) revert InvalidDuration();
         if (_timelockDuration == 0) revert InvalidDuration();
         if (_guardians.length > 0 && _multisigThreshold < 2)
@@ -204,6 +287,47 @@ contract CoercionResistantVault {
             emit GuardianChanged(_guardians[i], true);
         }
         multisigThreshold = _multisigThreshold;
+    }
+
+    // ══════════════════════════════════════════════
+    //  ERC-4337 — Account Validation
+    // ══════════════════════════════════════════════
+
+    /**
+     * @notice Validate a UserOperation signature and pay prefund to EntryPoint.
+     * @dev Called by the EntryPoint during the validation phase. Verifies that
+     *      the UserOperation was signed by the vault owner using ECDSA.
+     *      The EntryPoint only proceeds to execute callData if this returns
+     *      SIG_VALIDATION_SUCCESS.
+     *
+     *      Flow: wallet builds UserOp → signs userOpHash → bundler submits
+     *      → EntryPoint calls validateUserOp() → if valid, EntryPoint calls
+     *      this contract with userOp.callData (e.g., execute(), hotSpend()).
+     */
+    function validateUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 missingAccountFunds
+    ) external onlyEntryPoint returns (uint256 validationData) {
+        validationData = _validateSignature(userOp, userOpHash);
+        _payPrefund(missingAccountFunds);
+    }
+
+    /**
+     * @notice Deposit ETH to the EntryPoint to pay for future UserOperations.
+     * @dev The vault must have a deposit at the EntryPoint to cover gas.
+     *      Anyone can fund the vault's EntryPoint deposit.
+     */
+    function addDeposit() external payable {
+        entryPoint.depositTo{value: msg.value}(address(this));
+    }
+
+    /**
+     * @notice Returns the vault's deposit balance at the EntryPoint.
+     */
+    function getDeposit() external view returns (uint256) {
+        (uint112 deposit,,,,) = entryPoint.getDepositInfo(address(this));
+        return deposit;
     }
 
     // ══════════════════════════════════════════════
@@ -720,6 +844,139 @@ contract CoercionResistantVault {
     }
 
     // ══════════════════════════════════════════════
+    //  DeFi Execution — Whitelisted targets only
+    // ══════════════════════════════════════════════
+
+    /// @notice Returns true if the target is whitelisted for execution.
+    function isWhitelisted(address target) external view returns (bool) {
+        return whitelistedTargets[target];
+    }
+
+    /**
+     * @notice Approve a whitelisted spender to spend vault tokens.
+     * @dev This is the ONLY way to grant ERC-20 allowances from the vault.
+     *      Token contracts MUST NOT be whitelisted — doing so would allow
+     *      execute() to call transfer()/approve() directly, bypassing
+     *      spending limits and this whitelisted-spender check.
+     *      Use amount = 0 to revoke an allowance.
+     */
+    function approveToken(address token, address spender, uint256 amount)
+        external
+        onlyOwner
+    {
+        if (token == address(0)) revert ZeroAddress();
+        if (spender == address(0)) revert ZeroAddress();
+        if (!whitelistedTargets[spender]) revert SpenderNotWhitelisted(spender);
+
+        bool success = IERC20(token).approve(spender, amount);
+        if (!success) revert TokenApprovalFailed(token, spender);
+
+        emit TokenApproval(token, spender, amount);
+    }
+
+    /**
+     * @notice Execute an arbitrary call to a whitelisted target contract.
+     * @dev Allows the vault to interact with DeFi protocols (swaps, LP, etc.)
+     *      while maintaining custody of funds. Only whitelisted contracts can
+     *      be called, and the whitelist itself is managed via timelock.
+     *      ETH value sent via execute() is NOT subject to hot spending limits,
+     *      as DeFi operations are value-preserving exchanges, not spends.
+     */
+    function execute(address target, uint256 value, bytes calldata data)
+        external
+        onlyOwner
+        returns (bytes memory result)
+    {
+        if (!whitelistedTargets[target]) revert TargetNotWhitelisted(target);
+        if (target == address(this)) revert SelfCallNotAllowed();
+
+        bool success;
+        (success, result) = target.call{value: value}(data);
+        if (!success) revert ExecutionFailed(target, result);
+
+        emit Executed(target, value, data, result);
+    }
+
+    /**
+     * @notice Execute a batch of calls to whitelisted targets atomically.
+     * @dev Useful for multi-step DeFi operations (e.g., approve + swap,
+     *      or approve + addLiquidity). Reverts entirely if any call fails.
+     */
+    function executeBatch(
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata datas
+    ) external onlyOwner returns (bytes[] memory results) {
+        uint256 len = targets.length;
+        if (len != values.length || len != datas.length)
+            revert BatchLengthMismatch();
+
+        results = new bytes[](len);
+
+        for (uint256 i = 0; i < len; i++) {
+            if (!whitelistedTargets[targets[i]])
+                revert TargetNotWhitelisted(targets[i]);
+            if (targets[i] == address(this)) revert SelfCallNotAllowed();
+
+            bool success;
+            (success, results[i]) = targets[i].call{value: values[i]}(datas[i]);
+            if (!success) revert ExecutionFailed(targets[i], results[i]);
+
+            emit Executed(targets[i], values[i], datas[i], results[i]);
+        }
+
+        emit BatchExecuted(len);
+    }
+
+    // ══════════════════════════════════════════════
+    //  Configuration — Whitelist
+    // ══════════════════════════════════════════════
+
+    /**
+     * @notice Add or remove a target contract from the whitelist.
+     * @dev Additions are timelocked (prevents attacker from whitelisting a
+     *      malicious contract and draining via execute() immediately).
+     *      Removals take effect immediately (more restrictive = more secure).
+     */
+    function setWhitelistedTarget(address target, bool allowed) external onlyOwner {
+        if (target == address(0)) revert ZeroAddress();
+        if (target == address(this)) revert SelfCallNotAllowed();
+
+        if (!allowed && whitelistedTargets[target]) {
+            // Removal: immediate effect (more secure)
+            whitelistedTargets[target] = false;
+            emit TargetWhitelisted(target, false);
+        } else if (allowed && !whitelistedTargets[target]) {
+            // Addition: subject to timelock
+            pendingWhitelistChange[target] = PendingConfigChange({
+                newValue: 1,
+                newValue2: 0,
+                effectiveTime: block.timestamp + timelockDuration,
+                active: true
+            });
+            emit WhitelistChangeScheduled(target, pendingWhitelistChange[target].effectiveTime);
+        }
+    }
+
+    /// @notice Execute a scheduled whitelist addition after the timelock.
+    function executeWhitelistChange(address target) external onlyOwner {
+        PendingConfigChange storage change = pendingWhitelistChange[target];
+        if (!change.active) revert NoActiveConfigChange();
+        if (block.timestamp < change.effectiveTime) revert ConfigChangeNotReady();
+
+        change.active = false;
+        whitelistedTargets[target] = true;
+
+        emit TargetWhitelisted(target, true);
+    }
+
+    /// @notice Cancel a scheduled whitelist change.
+    function cancelWhitelistChange(address target) external onlyOwnerOrGuardian {
+        pendingWhitelistChange[target].active = false;
+        emit WhitelistChangeCancelled(target);
+    }
+
+    // ══════════════════════════════════════════════
     //  Internal — ETH epoch
     // ══════════════════════════════════════════════
 
@@ -768,5 +1025,61 @@ contract CoercionResistantVault {
         req.unlockTime = block.timestamp + timelockDuration;
 
         emit WithdrawalRequested(requestId, token, to, amount, req.unlockTime);
+    }
+
+    // ══════════════════════════════════════════════
+    //  Internal — ERC-4337 signature validation
+    // ══════════════════════════════════════════════
+
+    /**
+     * @dev Validate the UserOperation signature using ECDSA recovery.
+     *      The userOpHash is signed by the owner's EOA key. We recover
+     *      the signer from the EIP-191 prefixed hash and compare to owner.
+     */
+    function _validateSignature(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash
+    ) internal view returns (uint256 validationData) {
+        // EIP-191 prefixed hash (what eth_sign / personal_sign produces)
+        bytes32 ethSignedHash = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash)
+        );
+
+        bytes calldata sig = userOp.signature;
+        if (sig.length != 65) return SIG_VALIDATION_FAILED;
+
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := calldataload(sig.offset)
+            s := calldataload(add(sig.offset, 0x20))
+            v := byte(0, calldataload(add(sig.offset, 0x40)))
+        }
+
+        // Reject malleable signatures (EIP-2)
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0)
+            return SIG_VALIDATION_FAILED;
+
+        address recovered = ecrecover(ethSignedHash, v, r, s);
+        if (recovered == address(0) || recovered != owner)
+            return SIG_VALIDATION_FAILED;
+
+        return SIG_VALIDATION_SUCCESS;
+    }
+
+    /**
+     * @dev Pay the EntryPoint the required prefund for gas.
+     *      Only sends if missingAccountFunds > 0.
+     */
+    function _payPrefund(uint256 missingAccountFunds) internal {
+        if (missingAccountFunds > 0) {
+            (bool success,) = payable(msg.sender).call{
+                value: missingAccountFunds,
+                gas: type(uint256).max
+            }("");
+            // Ignore failure — EntryPoint will revert if underfunded.
+            (success);
+        }
     }
 }

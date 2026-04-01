@@ -37,6 +37,9 @@ A smart contract wallet standard that works like a **bank vault with delayed ope
 - **Cancellable withdrawals** — Owner or any guardian can cancel during timelock window
 - **Timelocked configuration** — Attackers can't force limit increases or timelock reductions
 - **Tokens safe by default** — New tokens deposited have zero hot budget until configured
+- **DeFi execution** — Interact with whitelisted protocols (swaps, LP, etc.) without leaving the vault
+- **Whitelisted targets** — Only timelocked-approved contracts can be called via `execute()`
+- **ERC-4337 smart account** — Works as a native smart account with any dApp (Uniswap, Aave, etc.) via compatible wallets
 
 ## Repository contents
 
@@ -47,12 +50,14 @@ A smart contract wallet standard that works like a **bank vault with delayed ope
 
 ## Architecture
 
-The standard defines two interfaces:
+The standard defines three interfaces plus ERC-4337 account abstraction:
 
 - **`ICoercionResistantVault`** (core) — ETH hot/cold balance, timelocks, guardians, multisig
 - **`ICoercionResistantVaultTokens`** (extension) — ERC-20 token deposits, per-token spending limits, token cold vault withdrawals
+- **`ICoercionResistantVaultExecutor`** (extension) — DeFi execution via whitelisted targets, `approveToken()`, batch operations, timelock-managed whitelist
+- **`IAccount`** (ERC-4337) — Smart account support via `validateUserOp()`, ECDSA signature validation, EntryPoint integration
 
-Both share the same timelock duration, guardian set, and multisig configuration. The separation allows simpler implementations that only need ETH support.
+All share the same timelock duration, guardian set, and multisig configuration. The separation allows simpler implementations to adopt only the interfaces they need.
 
 ## Key design decisions
 
@@ -75,6 +80,23 @@ If an attacker initiates a cold vault withdrawal and leaves, any guardian can ca
 ### Rate-limited, not pooled
 
 The hot balance is not a separate pool that needs manual refilling — it's a rate limit on the total balance. The user always has access to their daily budget without any action.
+
+### DeFi execution with whitelisted targets
+
+The vault can act as a smart account, interacting with DeFi protocols (Uniswap, Aave, etc.) via `execute()` and `executeBatch()`. Only contracts on a **timelock-managed whitelist** can be called. Adding a new target requires waiting the full timelock (e.g., 72h), so an attacker cannot force the victim to whitelist a malicious contract and drain immediately. Removing targets is instant. DeFi calls are **not subject to spending limits** because swaps and LP are value-preserving — the vault retains custody of the resulting assets.
+
+Token allowances are granted via a dedicated `approveToken(token, spender, amount)` where the spender must be whitelisted. Token contracts themselves are never whitelisted (otherwise `execute()` could call `transfer()` and bypass spending limits).
+
+### ERC-4337: works with any dApp
+
+The vault implements `IAccount` (ERC-4337 v0.7), making it a native smart account. The user experience:
+
+1. Connect the **vault address** to Uniswap (not the owner EOA)
+2. Uniswap builds a swap transaction — the wallet wraps it as a UserOperation
+3. The owner signs with their EOA key, a bundler submits to the EntryPoint
+4. EntryPoint validates the signature via `validateUserOp()` and executes
+
+All vault security rules (spending limits, timelocks, whitelist) apply identically whether the call comes directly from the owner or through the EntryPoint. The owner's EOA key is the "remote control" — it can sign UserOperations but holds no funds.
 
 ## Recommended configurations
 

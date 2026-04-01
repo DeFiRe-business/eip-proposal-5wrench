@@ -8,7 +8,7 @@ status: Draft
 type: Standards Track
 category: ERC
 created: 2026-04-01
-requires: 165, 4337
+requires: 20, 165, 4337
 ---
 
 <!--
@@ -354,6 +354,104 @@ interface ICoercionResistantVaultTokens {
 }
 ```
 
+### Interface — DeFi Execution Extension
+
+Compliant contracts that support interaction with external DeFi protocols (acting as a
+smart account / EOA-like wallet) MUST additionally implement the following interface:
+
+```solidity
+interface ICoercionResistantVaultExecutor {
+
+    // ──────────────────────────────────────────────
+    //  Events — Execution & Whitelist
+    // ──────────────────────────────────────────────
+
+    /// @notice Emitted when a call is executed against a whitelisted target.
+    event Executed(address indexed target, uint256 value, bytes data, bytes result);
+
+    /// @notice Emitted when a batch of calls is executed.
+    event BatchExecuted(uint256 count);
+
+    /// @notice Emitted when the vault approves a whitelisted spender for a token.
+    event TokenApproval(address indexed token, address indexed spender, uint256 amount);
+
+    /// @notice Emitted when a target contract is added to or removed from the whitelist.
+    event TargetWhitelisted(address indexed target, bool allowed);
+
+    /// @notice Emitted when a whitelist change is scheduled (addition requires timelock).
+    event WhitelistChangeScheduled(address indexed target, uint256 effectiveTime);
+
+    /// @notice Emitted when a scheduled whitelist change is cancelled.
+    event WhitelistChangeCancelled(address indexed target);
+
+    // ──────────────────────────────────────────────
+    //  Views — Whitelist
+    // ──────────────────────────────────────────────
+
+    /// @notice Returns true if the target contract is whitelisted for execution.
+    function isWhitelisted(address target) external view returns (bool);
+
+    // ──────────────────────────────────────────────
+    //  Token Allowance — Owner only
+    // ──────────────────────────────────────────────
+
+    /// @notice Approve a whitelisted spender to spend vault tokens.
+    /// @dev MUST revert if `spender` is not whitelisted. This is the ONLY way
+    ///      to grant ERC-20 allowances from the vault. Calling `execute()` against
+    ///      a token contract to invoke `approve()` directly MUST NOT be possible
+    ///      (token contracts MUST NOT be whitelisted — doing so would allow
+    ///      `transfer()` calls that bypass spending limits).
+    /// @param token   The ERC-20 token to approve.
+    /// @param spender The whitelisted contract to grant allowance to.
+    /// @param amount  The allowance amount (0 to revoke).
+    function approveToken(address token, address spender, uint256 amount) external;
+
+    // ──────────────────────────────────────────────
+    //  Execution — Owner only
+    // ──────────────────────────────────────────────
+
+    /// @notice Execute an arbitrary call to a whitelisted target contract.
+    /// @dev MUST revert if `target` is not whitelisted.
+    ///      ETH value sent with the call is NOT subject to the hot spending limit,
+    ///      as DeFi operations (swaps, LP) are value-preserving exchanges, not spends.
+    ///      The vault retains custody — funds flow out and back through the protocol.
+    /// @param target The whitelisted contract to call.
+    /// @param value  The ETH value to send with the call.
+    /// @param data   The calldata to execute.
+    /// @return result The return data from the call.
+    function execute(address target, uint256 value, bytes calldata data)
+        external
+        returns (bytes memory result);
+
+    /// @notice Execute a batch of calls to whitelisted targets atomically.
+    /// @dev All targets MUST be whitelisted. Reverts if any call fails.
+    ///      Useful for multi-step DeFi operations (e.g., approve + swap,
+    ///      or approve + addLiquidity).
+    function executeBatch(
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata datas
+    ) external returns (bytes[] memory results);
+
+    // ──────────────────────────────────────────────
+    //  Whitelist management (owner only, additions timelocked)
+    // ──────────────────────────────────────────────
+
+    /// @notice Add or remove a target contract from the whitelist.
+    /// @dev Additions MUST be subject to a timelock delay equal to at least
+    ///      the current `timelockDuration`. This prevents an attacker from
+    ///      whitelisting a malicious contract and draining immediately.
+    ///      Removals MAY take effect immediately (more secure).
+    function setWhitelistedTarget(address target, bool allowed) external;
+
+    /// @notice Execute a scheduled whitelist addition after the timelock.
+    function executeWhitelistChange(address target) external;
+
+    /// @notice Cancel a scheduled whitelist change.
+    function cancelWhitelistChange(address target) external;
+}
+```
+
 ### Behavior Requirements
 
 #### Hot Balance and Spending Limits — ETH
@@ -395,32 +493,99 @@ interface ICoercionResistantVaultTokens {
     executable (timelock bypassed).
 21. `multisigThreshold` MUST be at least 2 when guardians are configured.
 
+#### Token Allowances
+
+18. `approveToken()` MUST revert if `spender` is not in the whitelist.
+19. `approveToken()` is the ONLY mechanism to grant ERC-20 allowances from the vault.
+    ERC-20 token contracts MUST NOT be added to the whitelist — doing so would allow
+    `execute()` to call `transfer()` or `approve()` directly, bypassing spending limits
+    and the whitelisted-spender requirement.
+20. `approveToken()` with `amount = 0` MUST revoke the allowance. Implementations
+    SHOULD encourage revoking allowances after use.
+
+#### DeFi Execution
+
+21. `execute()` MUST revert if `target` is not in the whitelist.
+22. `execute()` MUST revert if `target` is address(0) or the vault itself.
+23. `executeBatch()` MUST revert atomically if any individual call fails.
+24. `executeBatch()` MUST revert if array lengths do not match.
+25. ETH value sent via `execute()` is NOT subject to the hot spending limit. DeFi
+    operations (swaps, liquidity provision) are value-preserving exchanges where the
+    vault retains custody of the resulting assets. The whitelist is the security
+    boundary, not the spending limit.
+26. `hotSpend()` and `hotSpendToken()` remain the only paths for direct asset transfers
+    to non-whitelisted addresses.
+
+#### Whitelist Management
+
+27. Adding a target to the whitelist MUST be subject to a timelock delay equal to at
+    least the current `timelockDuration`.
+28. Removing a target from the whitelist MAY take effect immediately (this makes the
+    vault more restrictive, not less).
+29. The whitelist MUST NOT allow adding the vault's own address as a target
+    (re-entrancy vector).
+30. Cancellation of pending whitelist changes MUST be callable by the owner or any
+    guardian.
+
 #### Configuration Security
 
-22. Increases to `spendingLimit` (ETH) MUST be subject to a timelock delay equal to at
+31. Increases to `spendingLimit` (ETH) MUST be subject to a timelock delay equal to at
     least the current `timelockDuration`. This prevents an attacker from forcing the
     victim to raise the limit and then drain immediately.
-23. Increases to token spending limits MUST follow the same timelock rule. First-time
+32. Increases to token spending limits MUST follow the same timelock rule. First-time
     configuration (when no limit exists) MAY take effect immediately, as it only enables
     a hot budget where none existed before.
-24. Decreases to `timelockDuration` MUST be subject to a delay equal to the current
+33. Decreases to `timelockDuration` MUST be subject to a delay equal to the current
     `timelockDuration`.
-25. Changes to the guardian set MUST be subject to a timelock delay.
-26. Decreases to spending limits (ETH or token) and increases to `timelockDuration` MAY
+34. Changes to the guardian set MUST be subject to a timelock delay.
+35. Decreases to spending limits (ETH or token) and increases to `timelockDuration` MAY
     take effect immediately (these changes make the vault more secure, not less).
-27. The `timelockDuration` is shared across all assets—there is no per-token timelock.
+36. The `timelockDuration` is shared across all assets—there is no per-token timelock.
 
 ### ERC-165 Support
 
 Compliant contracts MUST implement ERC-165 and return `true` for the interface IDs of
 `ICoercionResistantVault` and, if token support is implemented, `ICoercionResistantVaultTokens`.
+If DeFi execution support is implemented, the contract MUST also return `true` for
+`ICoercionResistantVaultExecutor`.
 
-### ERC-4337 Compatibility
+### ERC-4337 Account Abstraction
 
-Implementations SHOULD be compatible with ERC-4337 account abstraction, allowing the vault
-to be used as a smart contract wallet with UserOperations. The hot spend functions (both ETH
-and token) SHOULD be callable via UserOp execution, while cold vault operations follow the
-same timelock/multisig rules regardless of the execution path.
+Compliant contracts MUST implement the ERC-4337 `IAccount` interface (v0.7), allowing
+the vault to be used as a first-class smart account with any dApp that supports
+UserOperations (Uniswap, Aave, etc. via compatible wallets like MetaMask).
+
+```solidity
+interface IAccount {
+    /// @notice Validate a UserOperation and pay the EntryPoint prefund.
+    /// @dev Called by the EntryPoint during the validation phase.
+    ///      MUST verify that userOp.signature is a valid ECDSA signature
+    ///      from the vault owner over the EIP-191 prefixed userOpHash.
+    ///      MUST pay missingAccountFunds to the EntryPoint for gas.
+    /// @return validationData 0 for success, 1 for signature failure.
+    function validateUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 missingAccountFunds
+    ) external returns (uint256 validationData);
+}
+```
+
+#### ERC-4337 Behavior Requirements
+
+37. `validateUserOp()` MUST only be callable by the canonical EntryPoint.
+38. `validateUserOp()` MUST verify that the signature is a valid ECDSA signature
+    from the vault owner over the EIP-191 prefixed `userOpHash`.
+39. `validateUserOp()` MUST reject malleable signatures (high `s` values per EIP-2).
+40. `validateUserOp()` MUST pay `missingAccountFunds` to the EntryPoint when > 0.
+41. All `onlyOwner` functions (hotSpend, execute, approveToken, configuration, etc.)
+    MUST accept calls from the EntryPoint address in addition to the owner, because
+    the EntryPoint calls the account with `userOp.callData` after successful validation.
+42. Implementations MUST provide a mechanism to deposit ETH to the EntryPoint to cover
+    gas costs for UserOperations.
+43. The vault's security model (spending limits, timelocks, whitelist) MUST apply
+    identically regardless of whether calls arrive directly from the owner or via
+    the EntryPoint.
 
 ## Rationale
 
@@ -480,6 +645,67 @@ superior because:
 1. The limitation is publicly auditable—the attacker can verify it themselves.
 2. The victim does not need to lie or perform theater under extreme stress.
 3. The mechanism works regardless of attacker sophistication.
+
+### Why allow DeFi execution via whitelisted targets?
+
+A vault that can only send ETH/tokens to addresses is not practical for users who
+participate in DeFi. Without execution capability, users would need to withdraw funds
+from the vault, interact with protocols, and re-deposit—negating the security benefits.
+By allowing `execute()` calls to whitelisted contracts, the vault can act as a smart
+account: performing swaps on Uniswap, providing liquidity on Aave, etc., while the
+funds never leave the vault's custody.
+
+The whitelist is the security boundary. Adding a new target requires waiting the full
+timelock, so an attacker cannot force the victim to whitelist a malicious drainer
+contract and call it immediately. Removing targets is instant—cutting off access is
+always safe.
+
+### Why a dedicated approveToken() instead of using execute()?
+
+To interact with DeFi protocols, the vault must grant ERC-20 allowances (e.g., approve a
+DEX router before a swap). If allowances were granted via `execute()` calling `approve()`
+on the token contract, the token contract itself would need to be whitelisted. But a
+whitelisted token contract would also allow `execute()` to call `transfer()`, bypassing
+the vault's spending limits entirely.
+
+`approveToken(token, spender, amount)` solves this by only requiring the **spender** to
+be whitelisted, not the token contract. The typical DeFi flow becomes:
+
+1. `approveToken(USDC, uniswapRouter, 1000e6)` — grant allowance to whitelisted router
+2. `execute(uniswapRouter, 0, swapExactTokensForTokens(...))` — call the router
+3. `approveToken(USDC, uniswapRouter, 0)` — revoke allowance (recommended)
+
+This keeps token contracts out of the whitelist while enabling all standard DeFi
+interactions.
+
+### Why is DeFi execution not subject to spending limits?
+
+DeFi operations like swaps and liquidity provision are value-preserving: the vault sends
+ETH/tokens to a protocol and receives other assets back. Applying the hot spending limit
+to `execute()` would make most DeFi operations impossible (a 10 ETH swap would consume
+the entire daily budget despite the vault receiving equivalent value back). The whitelist
+serves as the security control instead—only pre-approved, timelocked contracts can be
+called.
+
+`hotSpend()` and `hotSpendToken()` remain the exclusive paths for direct transfers to
+arbitrary addresses, where spending limits are enforced.
+
+### Why require ERC-4337 instead of just direct calls?
+
+Without account abstraction, the vault requires a custom frontend for every dApp
+interaction. With ERC-4337, the vault becomes a standard smart account that works with
+any dApp via compatible wallets (MetaMask, Ambire, etc.):
+
+1. User connects their vault address (not the owner EOA) to Uniswap.
+2. Uniswap builds a swap transaction targeting the vault.
+3. The wallet builds a UserOperation with `callData = abi.encodeCall(execute, (...))`.
+4. The owner signs the UserOperation with their EOA key.
+5. A bundler submits it to the EntryPoint.
+6. EntryPoint calls `validateUserOp()` (verifies owner signature), then executes.
+
+The vault's spending limits, timelocks, and whitelist apply identically regardless of
+the execution path. ERC-4337 is the transport layer; the vault's security model is the
+enforcement layer.
 
 ### Why is first-time token configuration immediate?
 
@@ -555,6 +781,53 @@ blocklisted). Implementations SHOULD account for fee-on-transfer tokens by check
 received amounts. Rebasing tokens may cause balance discrepancies between tracked spending
 limits and actual balances. Implementations SHOULD NOT assume that `transfer(to, amount)`
 always delivers exactly `amount` tokens.
+
+### Malicious whitelisted contract
+
+If a whitelisted contract is compromised or upgraded to a malicious implementation,
+the attacker could drain the vault via `execute()`. Mitigations:
+
+- Implementations SHOULD recommend whitelisting only immutable or well-audited contracts.
+- Proxy contracts (upgradeable) carry additional risk—a governance attack on the protocol
+  could turn a whitelisted target into a drainer.
+- Guardians can immediately remove a compromised target from the whitelist via
+  `cancelWhitelistChange()` or the owner can call `setWhitelistedTarget(target, false)`.
+- Users SHOULD periodically review their whitelist and remove unused targets.
+
+### Token allowances via approveToken()
+
+The `approveToken()` function grants ERC-20 allowances to whitelisted spender contracts.
+This is necessary for DeFi interactions (e.g., approving a DEX router before a swap).
+Token contracts themselves MUST NOT be whitelisted — doing so would allow `execute()` to
+call `transfer()` or `approve()` directly, bypassing spending limits and the whitelisted-
+spender constraint.
+
+Unlimited approvals (`type(uint256).max`) carry risk if the approved contract is later
+compromised. Implementations SHOULD recommend exact-amount approvals and revoking
+allowances after use (`approveToken(token, spender, 0)`).
+
+### Re-entrancy via execute()
+
+The `execute()` function performs an external call, which could re-enter the vault.
+Implementations SHOULD use a reentrancy guard on `execute()` and `executeBatch()`.
+The reference implementation relies on the whitelist as the trust boundary, but defense
+in depth via `nonReentrant` modifiers is RECOMMENDED.
+
+### EntryPoint trust model
+
+The vault trusts the EntryPoint to only call functions after successful signature
+validation. If the canonical EntryPoint contract were compromised, an attacker could
+call any `onlyOwner` function without a valid signature. This risk is inherent to
+all ERC-4337 accounts and is mitigated by the EntryPoint being a well-audited,
+immutable singleton contract. Implementations MUST use the canonical EntryPoint and
+MUST NOT allow changing it after deployment.
+
+### Signature replay across chains
+
+The `userOpHash` provided by the EntryPoint includes the chain ID, preventing cross-chain
+replay. However, if the same owner deploys vaults on multiple chains with the same
+EntryPoint, a UserOperation for one chain cannot be replayed on another because the
+vault address and chain ID are part of the hash.
 
 ### Configuration lock-out
 
