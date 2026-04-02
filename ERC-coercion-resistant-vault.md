@@ -3,7 +3,7 @@ eip: TBD
 title: Coercion-Resistant Vault Standard
 description: A smart contract wallet standard with spending limits, timelocks, and multisig to protect against physical coercion attacks
 author: cmayorga (@cmayorga)
-discussions-to: https://ethereum-magicians.org/t/erc-coercion-resistant-vault/TBD
+discussions-to: https://ethereum-magicians.org/t/erc-coercion-resistant-vault-spending-limits-timelock-multisig-against-5-wrench-attacks/28130
 status: Draft
 type: Standards Track
 category: ERC
