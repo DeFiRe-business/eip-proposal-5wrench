@@ -14,8 +14,8 @@ requires: 20, 165, 4337
 <!--
   NOTE: The EIP number (currently "TBD") will be assigned by an EIP editor
   when this proposal is submitted as a Pull Request to the ethereum/EIPs
-  repository. Do NOT self-assign a number.
-
+  repository.
+  
   Pre-proposal discussion and development:
   https://github.com/DeFiRe-business/eip-proposal-5wrench
 -->
@@ -93,6 +93,9 @@ are to be interpreted as described in RFC 2119 and RFC 8174.
 - **Withdrawal request**: A pending transfer from the cold vault, subject to the timelock
   period and cancellable by the owner or any guardian. Each request specifies which asset
   (ETH or token) is being withdrawn.
+- **Pause state**: A temporary state invokable by any single guardian that blocks all
+  value-moving operations (hot spends, DeFi execution, new withdrawal requests) for a
+  bounded duration, allowing response to suspicious activity.
 
 ### Interface — Core (ETH)
 
@@ -146,6 +149,12 @@ interface ICoercionResistantVault {
     /// @notice Emitted when a guardian is added or removed.
     event GuardianChanged(address indexed guardian, bool added);
 
+    /// @notice Emitted when the vault is paused by a guardian.
+    event VaultPaused(address indexed by, uint256 until);
+
+    /// @notice Emitted when the vault is explicitly unpaused (before auto-expiry).
+    event VaultUnpaused(address indexed by);
+
     // ──────────────────────────────────────────────
     //  Views — ETH
     // ──────────────────────────────────────────────
@@ -184,6 +193,15 @@ interface ICoercionResistantVault {
     /// @notice Returns true if the address is a registered guardian.
     function isGuardian(address account) external view returns (bool);
 
+    /// @notice Returns the timestamp when the current pause expires (0 if not paused).
+    function pausedUntil() external view returns (uint256);
+
+    /// @notice Returns true if the vault is currently paused.
+    function isPaused() external view returns (bool);
+
+    /// @notice Returns the number of currently pending (unresolved) withdrawal requests.
+    function pendingWithdrawalCount() external view returns (uint256);
+
     /// @notice Returns details of a pending withdrawal request.
     /// @return token The asset address (address(0) for ETH).
     function getWithdrawalRequest(uint256 requestId)
@@ -205,6 +223,7 @@ interface ICoercionResistantVault {
 
     /// @notice Transfer ETH from the hot balance, subject to spending limit.
     /// @dev MUST revert if amount exceeds remainingHotBudget().
+    ///      MUST revert if the vault is paused.
     function hotSpend(address payable to, uint256 amount) external;
 
     // ──────────────────────────────────────────────
@@ -213,6 +232,8 @@ interface ICoercionResistantVault {
 
     /// @notice Request an ETH withdrawal from the cold vault, starting the timelock.
     /// @dev MUST revert if amount exceeds coldBalance(). Only callable by owner.
+    ///      MUST revert if pendingWithdrawalCount() is at MAX_PENDING_WITHDRAWALS.
+    ///      MUST revert if the vault is paused.
     /// @return requestId The ID of the created withdrawal request.
     function requestWithdrawal(address payable to, uint256 amount)
         external
@@ -229,6 +250,7 @@ interface ICoercionResistantVault {
     function executeWithdrawal(uint256 requestId) external;
 
     /// @notice Cancel a pending withdrawal. Callable by the owner or any guardian.
+    /// @dev MUST remain callable even while the vault is paused (safety action).
     function cancelWithdrawal(uint256 requestId) external;
 
     /// @notice Approve a pending withdrawal via multisig, bypassing the timelock.
@@ -237,12 +259,31 @@ interface ICoercionResistantVault {
     function approveWithdrawal(uint256 requestId) external;
 
     // ──────────────────────────────────────────────
+    //  Emergency pause (guardian panic button)
+    // ──────────────────────────────────────────────
+
+    /// @notice Pause the vault, blocking value-moving operations temporarily.
+    /// @dev Callable by any single guardian. The pause auto-expires after
+    ///      MAX_PAUSE_DURATION (RECOMMENDED: 24 hours). Multisig can extend
+    ///      the pause beyond auto-expiry. The owner can lift the pause with
+    ///      multisig approval from other guardians.
+    function pause() external;
+
+    /// @notice Unpause the vault before auto-expiry.
+    /// @dev Requires multisig approval (>= multisigThreshold guardians must sign).
+    ///      Alternatively, the owner MAY unpause with explicit guardian approval
+    ///      tracked off-chain via multisig signatures.
+    function unpause() external;
+
+    // ──────────────────────────────────────────────
     //  Configuration (owner only, subject to timelock)
     // ──────────────────────────────────────────────
 
     /// @notice Update the ETH hot balance spending limit.
-    /// @dev Increases SHOULD be subject to a timelock delay.
-    ///      Decreases MAY take effect immediately.
+    /// @dev Limit increases SHOULD be subject to a timelock delay.
+    ///      Epoch duration decreases SHOULD also be subject to a timelock delay,
+    ///      as they effectively increase the spending rate.
+    ///      Limit decreases and epoch duration increases MAY take effect immediately.
     function setSpendingLimit(uint256 newLimit, uint256 newEpochDuration) external;
 
     /// @notice Update the timelock duration for cold vault withdrawals.
@@ -253,6 +294,7 @@ interface ICoercionResistantVault {
 
     /// @notice Add or remove a guardian.
     /// @dev Changes SHOULD be subject to a timelock delay.
+    ///      Removal MUST revert if it would leave guardianList.length < multisigThreshold.
     function setGuardian(address guardian, bool active) external;
 
     /// @notice Set the number of guardian approvals required for instant withdrawal.
@@ -325,6 +367,7 @@ interface ICoercionResistantVaultTokens {
     /// @notice Transfer tokens from the hot balance, subject to per-token limit.
     /// @dev MUST revert if amount exceeds remainingTokenHotBudget(token).
     ///      MUST revert if token has no spending limit configured.
+    ///      MUST revert if the vault is paused.
     function hotSpendToken(address token, address to, uint256 amount) external;
 
     // ──────────────────────────────────────────────
@@ -333,6 +376,8 @@ interface ICoercionResistantVaultTokens {
 
     /// @notice Request a token withdrawal from the cold vault, starting the timelock.
     /// @dev MUST revert if amount exceeds tokenColdBalance(token).
+    ///      MUST revert if pendingWithdrawalCount() is at MAX_PENDING_WITHDRAWALS.
+    ///      MUST revert if the vault is paused.
     /// @return requestId The ID of the created withdrawal request.
     function requestTokenWithdrawal(address token, address payable to, uint256 amount)
         external
@@ -344,8 +389,9 @@ interface ICoercionResistantVaultTokens {
 
     /// @notice Configure or update the spending limit for an ERC-20 token.
     /// @dev First-time configuration MAY take effect immediately.
-    ///      Subsequent increases SHOULD be subject to a timelock delay.
-    ///      Decreases MAY take effect immediately.
+    ///      Subsequent limit increases and epoch duration decreases SHOULD be
+    ///      subject to a timelock delay.
+    ///      Limit decreases and epoch duration increases MAY take effect immediately.
     function setTokenSpendingLimit(
         address token,
         uint256 newLimit,
@@ -401,6 +447,7 @@ interface ICoercionResistantVaultExecutor {
     ///      a token contract to invoke `approve()` directly MUST NOT be possible
     ///      (token contracts MUST NOT be whitelisted — doing so would allow
     ///      `transfer()` calls that bypass spending limits).
+    ///      MUST revert if the vault is paused.
     /// @param token   The ERC-20 token to approve.
     /// @param spender The whitelisted contract to grant allowance to.
     /// @param amount  The allowance amount (0 to revoke).
@@ -412,6 +459,7 @@ interface ICoercionResistantVaultExecutor {
 
     /// @notice Execute an arbitrary call to a whitelisted target contract.
     /// @dev MUST revert if `target` is not whitelisted.
+    ///      MUST revert if the vault is paused.
     ///      ETH value sent with the call is NOT subject to the hot spending limit,
     ///      as DeFi operations (swaps, LP) are value-preserving exchanges, not spends.
     ///      The vault retains custody — funds flow out and back through the protocol.
@@ -425,6 +473,7 @@ interface ICoercionResistantVaultExecutor {
 
     /// @notice Execute a batch of calls to whitelisted targets atomically.
     /// @dev All targets MUST be whitelisted. Reverts if any call fails.
+    ///      MUST revert if the vault is paused.
     ///      Useful for multi-step DeFi operations (e.g., approve + swap,
     ///      or approve + addLiquidity).
     function executeBatch(
@@ -452,6 +501,17 @@ interface ICoercionResistantVaultExecutor {
 }
 ```
 
+### Constants
+
+Compliant implementations MUST define the following constants:
+
+- `MAX_PENDING_WITHDRAWALS`: the maximum number of concurrent unresolved withdrawal
+  requests. RECOMMENDED value: `32`. Prevents unbounded storage growth and DoS via
+  request spam if the owner's key is compromised.
+- `MAX_PAUSE_DURATION`: the maximum duration of a single guardian-initiated pause.
+  RECOMMENDED value: `24 hours`. After this period the pause auto-expires unless
+  extended via multisig.
+
 ### Behavior Requirements
 
 #### Hot Balance and Spending Limits — ETH
@@ -462,85 +522,115 @@ interface ICoercionResistantVaultExecutor {
 4. `remainingHotBudget()` MUST return `min(spendingLimit - spentInCurrentEpoch, address(this).balance)`.
 5. The hot balance is NOT a separate pool—it is a rate-limited view of the total balance.
    The cold balance is calculated as `totalBalance - remainingHotBudget()`.
+6. Reducing `epochDuration` while keeping the same `spendingLimit` effectively increases
+   the spending rate and MUST be subject to the same timelock delay as a limit increase.
 
 #### Hot Balance and Spending Limits — ERC-20 Tokens
 
-6. Each ERC-20 token MUST have independent spending limit, epoch duration, and epoch
+7. Each ERC-20 token MUST have independent spending limit, epoch duration, and epoch
    tracking state.
-7. A token with no configured spending limit (epoch duration = 0) MUST have a hot budget
+8. A token with no configured spending limit (epoch duration = 0) MUST have a hot budget
    of zero—all tokens are in the cold vault by default until configured.
-8. `hotSpendToken()` MUST revert if the token has no spending limit configured.
-9. `hotSpendToken()` MUST revert if `amount > remainingTokenHotBudget(token)`.
-10. Token epoch resets MUST be independent from the ETH epoch.
+9. `hotSpendToken()` MUST revert if the token has no spending limit configured.
+10. `hotSpendToken()` MUST revert if `amount > remainingTokenHotBudget(token)`.
+11. Token epoch resets MUST be independent from the ETH epoch.
+12. Per-token epoch duration decreases MUST follow the same timelock rule as ETH.
 
 #### Cold Vault Withdrawals
 
-11. `requestWithdrawal()` MUST create a pending request with `unlockTime = block.timestamp + timelockDuration`.
-12. `requestTokenWithdrawal()` MUST store the token address in the withdrawal request.
-13. `executeWithdrawal()` MUST handle both ETH and token requests based on the stored
+13. `requestWithdrawal()` MUST create a pending request with `unlockTime = block.timestamp + timelockDuration`.
+14. `requestWithdrawal()` and `requestTokenWithdrawal()` MUST revert if
+    `pendingWithdrawalCount() >= MAX_PENDING_WITHDRAWALS`. This prevents unbounded
+    storage growth and denial-of-service via request spam.
+15. `requestTokenWithdrawal()` MUST store the token address in the withdrawal request.
+16. `executeWithdrawal()` MUST handle both ETH and token requests based on the stored
     token address (address(0) = ETH).
-14. `executeWithdrawal()` MUST revert if `block.timestamp < unlockTime`.
-15. `executeWithdrawal()` MUST revert if the request has been cancelled.
-16. `cancelWithdrawal()` MUST be callable by the owner OR any registered guardian.
-17. `cancelWithdrawal()` MUST work at any time before execution, including after the
-    timelock expires.
+17. `executeWithdrawal()` MUST revert if `block.timestamp < unlockTime`.
+18. `executeWithdrawal()` MUST revert if the request has been cancelled.
+19. `cancelWithdrawal()` MUST be callable by the owner OR any registered guardian.
+20. `cancelWithdrawal()` MUST work at any time before execution, including after the
+    timelock expires, and including while the vault is paused (safety action).
+21. Executed or cancelled withdrawal requests MUST decrement `pendingWithdrawalCount`.
 
 #### Multisig Bypass
 
-18. `approveWithdrawal()` MUST be callable only by registered guardians.
-19. Each guardian MUST only be able to approve each request once.
-20. When `approvalCount >= multisigThreshold`, the withdrawal MUST become immediately
+22. `approveWithdrawal()` MUST be callable only by registered guardians.
+23. Each guardian MUST only be able to approve each request once.
+24. When `approvalCount >= multisigThreshold`, the withdrawal MUST become immediately
     executable (timelock bypassed).
-21. `multisigThreshold` MUST be at least 2 when guardians are configured.
+25. `multisigThreshold` MUST be at least 2 when guardians are configured.
+
+#### Guardian Management Invariants
+
+26. Removing a guardian MUST revert if it would leave `guardianList.length < multisigThreshold`.
+    The owner MUST explicitly reduce the threshold first via `setMultisigThreshold()` before
+    removing guardians that would violate this invariant. This prevents the vault from
+    entering an unreachable state where multisig bypass is impossible.
+
+#### Emergency Pause
+
+27. `pause()` MUST be callable by any single registered guardian.
+28. While paused, the following operations MUST revert: `hotSpend`, `hotSpendToken`,
+    `requestWithdrawal`, `requestTokenWithdrawal`, `execute`, `executeBatch`, `approveToken`.
+29. While paused, the following operations MUST remain callable: `cancelWithdrawal`,
+    `approveWithdrawal`, `unpause`, any view functions, deposits, and configuration
+    reads. These are safety or read-only actions.
+30. A pause MUST auto-expire after `MAX_PAUSE_DURATION` from activation. After expiry,
+    operations resume without any explicit `unpause()` call.
+31. `unpause()` before auto-expiry MUST require multisig approval
+    (`>= multisigThreshold` guardian signatures). The owner alone cannot unpause.
+32. A single guardian MAY extend an active pause by calling `pause()` again, resetting
+    the auto-expiry timer. This allows sustained freezing when suspicious activity
+    continues.
 
 #### Token Allowances
 
-18. `approveToken()` MUST revert if `spender` is not in the whitelist.
-19. `approveToken()` is the ONLY mechanism to grant ERC-20 allowances from the vault.
+33. `approveToken()` MUST revert if `spender` is not in the whitelist.
+34. `approveToken()` is the ONLY mechanism to grant ERC-20 allowances from the vault.
     ERC-20 token contracts MUST NOT be added to the whitelist — doing so would allow
     `execute()` to call `transfer()` or `approve()` directly, bypassing spending limits
     and the whitelisted-spender requirement.
-20. `approveToken()` with `amount = 0` MUST revoke the allowance. Implementations
+35. `approveToken()` with `amount = 0` MUST revoke the allowance. Implementations
     SHOULD encourage revoking allowances after use.
 
 #### DeFi Execution
 
-21. `execute()` MUST revert if `target` is not in the whitelist.
-22. `execute()` MUST revert if `target` is address(0) or the vault itself.
-23. `executeBatch()` MUST revert atomically if any individual call fails.
-24. `executeBatch()` MUST revert if array lengths do not match.
-25. ETH value sent via `execute()` is NOT subject to the hot spending limit. DeFi
+36. `execute()` MUST revert if `target` is not in the whitelist.
+37. `execute()` MUST revert if `target` is address(0) or the vault itself.
+38. `executeBatch()` MUST revert atomically if any individual call fails.
+39. `executeBatch()` MUST revert if array lengths do not match.
+40. ETH value sent via `execute()` is NOT subject to the hot spending limit. DeFi
     operations (swaps, liquidity provision) are value-preserving exchanges where the
     vault retains custody of the resulting assets. The whitelist is the security
     boundary, not the spending limit.
-26. `hotSpend()` and `hotSpendToken()` remain the only paths for direct asset transfers
+41. `hotSpend()` and `hotSpendToken()` remain the only paths for direct asset transfers
     to non-whitelisted addresses.
 
 #### Whitelist Management
 
-27. Adding a target to the whitelist MUST be subject to a timelock delay equal to at
+42. Adding a target to the whitelist MUST be subject to a timelock delay equal to at
     least the current `timelockDuration`.
-28. Removing a target from the whitelist MAY take effect immediately (this makes the
+43. Removing a target from the whitelist MAY take effect immediately (this makes the
     vault more restrictive, not less).
-29. The whitelist MUST NOT allow adding the vault's own address as a target
+44. The whitelist MUST NOT allow adding the vault's own address as a target
     (re-entrancy vector).
-30. Cancellation of pending whitelist changes MUST be callable by the owner or any
+45. Cancellation of pending whitelist changes MUST be callable by the owner or any
     guardian.
 
 #### Configuration Security
 
-31. Increases to `spendingLimit` (ETH) MUST be subject to a timelock delay equal to at
+46. Increases to `spendingLimit` (ETH) MUST be subject to a timelock delay equal to at
     least the current `timelockDuration`. This prevents an attacker from forcing the
     victim to raise the limit and then drain immediately.
-32. Increases to token spending limits MUST follow the same timelock rule. First-time
+47. Increases to token spending limits MUST follow the same timelock rule. First-time
     configuration (when no limit exists) MAY take effect immediately, as it only enables
     a hot budget where none existed before.
-33. Decreases to `timelockDuration` MUST be subject to a delay equal to the current
+48. Decreases to `timelockDuration` MUST be subject to a delay equal to the current
     `timelockDuration`.
-34. Changes to the guardian set MUST be subject to a timelock delay.
-35. Decreases to spending limits (ETH or token) and increases to `timelockDuration` MAY
+49. Changes to the guardian set MUST be subject to a timelock delay.
+50. Decreases to spending limits (ETH or token) and increases to `timelockDuration` MAY
     take effect immediately (these changes make the vault more secure, not less).
-36. The `timelockDuration` is shared across all assets—there is no per-token timelock.
+51. The `timelockDuration` is shared across all assets—there is no per-token timelock.
 
 ### ERC-165 Support
 
@@ -573,19 +663,19 @@ interface IAccount {
 
 #### ERC-4337 Behavior Requirements
 
-37. `validateUserOp()` MUST only be callable by the canonical EntryPoint.
-38. `validateUserOp()` MUST verify that the signature is a valid ECDSA signature
+52. `validateUserOp()` MUST only be callable by the canonical EntryPoint.
+53. `validateUserOp()` MUST verify that the signature is a valid ECDSA signature
     from the vault owner over the EIP-191 prefixed `userOpHash`.
-39. `validateUserOp()` MUST reject malleable signatures (high `s` values per EIP-2).
-40. `validateUserOp()` MUST pay `missingAccountFunds` to the EntryPoint when > 0.
-41. All `onlyOwner` functions (hotSpend, execute, approveToken, configuration, etc.)
+54. `validateUserOp()` MUST reject malleable signatures (high `s` values per EIP-2).
+55. `validateUserOp()` MUST pay `missingAccountFunds` to the EntryPoint when > 0.
+56. All `onlyOwner` functions (hotSpend, execute, approveToken, configuration, etc.)
     MUST accept calls from the EntryPoint address in addition to the owner, because
     the EntryPoint calls the account with `userOp.callData` after successful validation.
-42. Implementations MUST provide a mechanism to deposit ETH to the EntryPoint to cover
+57. Implementations MUST provide a mechanism to deposit ETH to the EntryPoint to cover
     gas costs for UserOperations.
-43. The vault's security model (spending limits, timelocks, whitelist) MUST apply
-    identically regardless of whether calls arrive directly from the owner or via
-    the EntryPoint.
+58. The vault's security model (spending limits, timelocks, whitelist, pause state)
+    MUST apply identically regardless of whether calls arrive directly from the owner
+    or via the EntryPoint.
 
 ## Rationale
 
@@ -629,11 +719,50 @@ Without this, an attacker could force the victim to: (1) raise the spending limi
 infinity, (2) immediately drain the entire balance. The timelock on configuration changes
 closes this attack vector. This applies equally to ETH and token spending limits.
 
+### Why are epoch duration decreases timelocked?
+
+A subtle attack vector: with a fixed spending limit, reducing the epoch duration increases
+the effective spending rate. For example, going from "1 ETH / 24h" to "1 ETH / 1h" means
+24x more can be extracted per day. Without the timelock on duration decreases, an attacker
+could force the victim to compress epochs and drain rapidly. Treating duration decreases
+the same as limit increases closes this vector.
+
 ### Why can guardians cancel withdrawals?
 
 If an attacker forces a cold vault withdrawal and then leaves (planning to return after the
 timelock), a guardian can cancel the withdrawal during the delay period. This gives the
 victim and their trusted contacts a window to respond.
+
+### Why an emergency pause mechanism?
+
+Cancellation alone is insufficient — it only stops pending cold vault withdrawals. It does
+not stop the owner's key from continuing to drain the hot balance or interact with DeFi
+via `execute()`. The emergency pause is a true "freeze everything now" button available
+to any single guardian, for cases where:
+
+- The owner has been kidnapped and is being held for extended coercion
+- The owner's key has been compromised (phishing, malware) and is actively being drained
+- Unusual activity patterns suggest an ongoing attack
+
+Single-guardian activation is intentional: waiting for multisig consensus during an active
+attack defeats the purpose. The 24-hour auto-expiry and multisig requirement for extension
+prevent a malicious or compromised guardian from freezing funds indefinitely.
+
+### Why a cap on pending withdrawal requests?
+
+Without a limit, the owner (or an attacker with the owner's key) could call
+`requestWithdrawal()` thousands of times, bloating storage and potentially causing
+denial-of-service conditions. The cap is low enough to prevent abuse (32) but high enough
+for any legitimate multi-withdrawal workflow. Cancelled or executed requests free up
+slots, so the limit applies only to unresolved requests.
+
+### Why guard against guardian removal below threshold?
+
+If removing a guardian would leave fewer guardians than the multisig threshold, the
+multisig bypass path becomes permanently unreachable. Cold vault withdrawals could only
+exit via the timelock, which is not a security issue per se but removes a capability the
+owner likely wants. Requiring an explicit threshold reduction before such a removal
+forces the owner to acknowledge the change and maintains a consistent, reachable state.
 
 ### Why not use a duress PIN / panic wallet instead?
 
@@ -763,6 +892,15 @@ SHOULD be able to remove guardians, though this action is itself subject to a ti
 Implementations MAY add a dispute resolution mechanism or require a majority of guardians
 to agree on cancellation.
 
+### Griefing via emergency pause
+
+A malicious guardian could repeatedly pause the vault, disrupting normal operation. The
+24-hour auto-expiry bounds the damage of any single pause. A malicious guardian can at
+most cause 24 hours of downtime before the pause expires or other guardians intervene
+via `unpause()`. The owner can initiate guardian removal immediately after an abusive
+pause, though the removal itself is timelocked. Implementations MAY add a rate limit on
+pause activations by a single guardian (e.g., no more than once per 72 hours).
+
 ### Front-running and MEV
 
 Withdrawal execution transactions are not time-sensitive in a way that creates significant
@@ -834,6 +972,16 @@ vault address and chain ID are part of the hash.
 If the owner loses access to their key, the cold vault funds become permanently locked
 (no guardian has unilateral withdrawal rights). Implementations SHOULD consider adding a
 social recovery mechanism compatible with the vault's security model.
+
+## Acknowledgments
+
+Thanks to the following community members for review and feedback that shaped this
+specification:
+
+- **Harish Kumar Gunjalli** ([@HarishKumarGunjalli](https://ethereum-magicians.org/u/HarishKumarGunjalli)) —
+  identified the guardian-removal-below-threshold invariant, raised the concurrent
+  withdrawal DoS concern, surfaced the epoch duration attack vector, and proposed the
+  emergency pause mechanism. [Review thread](https://ethereum-magicians.org/t/erc-coercion-resistant-vault-spending-limits-timelock-multisig-against-5-wrench-attacks/28130/2).
 
 ## Copyright
 

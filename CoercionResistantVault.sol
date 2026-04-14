@@ -104,6 +104,14 @@ contract CoercionResistantVault is IAccount {
     /// @notice Sentinel value representing native ETH in token-aware functions.
     address public constant ETH = address(0);
 
+    /// @notice Maximum number of concurrent unresolved withdrawal requests.
+    /// @dev Prevents unbounded storage growth and DoS via request spam.
+    uint256 public constant MAX_PENDING_WITHDRAWALS = 32;
+
+    /// @notice Maximum duration of a single guardian-initiated pause.
+    /// @dev After this period the pause auto-expires unless extended.
+    uint256 public constant MAX_PAUSE_DURATION = 24 hours;
+
     // ══════════════════════════════════════════════
     //  ERC-4337
     // ══════════════════════════════════════════════
@@ -136,6 +144,10 @@ contract CoercionResistantVault is IAccount {
     uint256 public timelockDuration;
     uint256 public nextRequestId;
 
+    /// @notice Number of currently pending (unresolved) withdrawal requests.
+    /// @dev Capped at MAX_PENDING_WITHDRAWALS. Decrements on execution or cancellation.
+    uint256 public pendingWithdrawalCount;
+
     mapping(uint256 => WithdrawalRequest) public withdrawalRequests;
 
     // --- Guardians & multisig ---
@@ -145,6 +157,17 @@ contract CoercionResistantVault is IAccount {
 
     // --- Whitelisted DeFi targets ---
     mapping(address => bool) public whitelistedTargets;
+
+    // --- Emergency pause ---
+    /// @notice Timestamp when current pause expires (0 if not paused).
+    uint256 public pausedUntil;
+
+    /// @notice Tracks guardian approvals for an active unpause request.
+    /// @dev Keyed by (pausedUntil, guardian) to prevent stale approvals across pauses.
+    mapping(uint256 => mapping(address => bool)) public unpauseApprovedBy;
+
+    /// @notice Count of unpause approvals for the current pause.
+    mapping(uint256 => uint256) public unpauseApprovalCount;
 
     // --- Pending configuration changes (timelocked) ---
     PendingConfigChange public pendingLimitChange;
@@ -183,6 +206,9 @@ contract CoercionResistantVault is IAccount {
     event TargetWhitelisted(address indexed target, bool allowed);
     event WhitelistChangeScheduled(address indexed target, uint256 effectiveTime);
     event WhitelistChangeCancelled(address indexed target);
+    event VaultPaused(address indexed by, uint256 until);
+    event VaultUnpaused(address indexed by);
+    event UnpauseApproved(address indexed guardian, uint256 approvalCount);
 
     // ══════════════════════════════════════════════
     //  Errors
@@ -214,6 +240,11 @@ contract CoercionResistantVault is IAccount {
     error TokenApprovalFailed(address token, address spender);
     error NotEntryPoint();
     error NotOwnerOrEntryPoint();
+    error TooManyPendingWithdrawals(uint256 current, uint256 max);
+    error GuardianRemovalWouldBreakThreshold(uint256 remaining, uint256 threshold);
+    error VaultPausedError(uint256 until);
+    error VaultNotPaused();
+    error InsufficientUnpauseApprovals(uint256 current, uint256 required);
 
     // ══════════════════════════════════════════════
     //  Modifiers
@@ -238,6 +269,14 @@ contract CoercionResistantVault is IAccount {
     modifier onlyOwnerOrGuardian() {
         if (msg.sender != owner && !isGuardian[msg.sender])
             revert NotOwnerOrGuardian();
+        _;
+    }
+
+    /// @notice Blocks execution when the vault is paused.
+    /// @dev Applied to value-moving operations. Safety actions (cancel, unpause)
+    ///      remain callable to allow response during a pause.
+    modifier whenNotPaused() {
+        if (_isPaused()) revert VaultPausedError(pausedUntil);
         _;
     }
 
@@ -295,14 +334,6 @@ contract CoercionResistantVault is IAccount {
 
     /**
      * @notice Validate a UserOperation signature and pay prefund to EntryPoint.
-     * @dev Called by the EntryPoint during the validation phase. Verifies that
-     *      the UserOperation was signed by the vault owner using ECDSA.
-     *      The EntryPoint only proceeds to execute callData if this returns
-     *      SIG_VALIDATION_SUCCESS.
-     *
-     *      Flow: wallet builds UserOp → signs userOpHash → bundler submits
-     *      → EntryPoint calls validateUserOp() → if valid, EntryPoint calls
-     *      this contract with userOp.callData (e.g., execute(), hotSpend()).
      */
     function validateUserOp(
         PackedUserOperation calldata userOp,
@@ -313,18 +344,12 @@ contract CoercionResistantVault is IAccount {
         _payPrefund(missingAccountFunds);
     }
 
-    /**
-     * @notice Deposit ETH to the EntryPoint to pay for future UserOperations.
-     * @dev The vault must have a deposit at the EntryPoint to cover gas.
-     *      Anyone can fund the vault's EntryPoint deposit.
-     */
+    /// @notice Deposit ETH to the EntryPoint to pay for future UserOperations.
     function addDeposit() external payable {
         entryPoint.depositTo{value: msg.value}(address(this));
     }
 
-    /**
-     * @notice Returns the vault's deposit balance at the EntryPoint.
-     */
+    /// @notice Returns the vault's deposit balance at the EntryPoint.
     function getDeposit() external view returns (uint256) {
         (uint112 deposit,,,,) = entryPoint.getDepositInfo(address(this));
         return deposit;
@@ -344,10 +369,6 @@ contract CoercionResistantVault is IAccount {
 
     /**
      * @notice Deposit ERC-20 tokens into the vault.
-     * @dev Caller must have approved this contract to spend `amount` of `token`.
-     *      The token MUST have a spending limit configured via setTokenSpendingLimit()
-     *      before deposits are useful (otherwise all tokens are in cold vault with
-     *      no hot budget).
      */
     function depositToken(address token, uint256 amount) external {
         if (token == address(0)) revert ZeroAddress();
@@ -388,15 +409,13 @@ contract CoercionResistantVault is IAccount {
     //  View Functions — ERC-20 Tokens
     // ══════════════════════════════════════════════
 
-    /// @notice Returns the total token balance held by the vault.
     function totalTokenBalance(address token) public view returns (uint256) {
         return IERC20(token).balanceOf(address(this));
     }
 
-    /// @notice Returns the remaining hot budget for a specific token.
     function remainingTokenHotBudget(address token) public view returns (uint256) {
         TokenEpochState storage state = tokenEpochs[token];
-        if (state.epochDuration == 0) return 0; // not configured
+        if (state.epochDuration == 0) return 0;
 
         uint256 spent = _isTokenEpochExpired(token) ? 0 : state.spentInCurrentEpoch;
         uint256 budget = state.spendingLimit > spent ? state.spendingLimit - spent : 0;
@@ -404,19 +423,16 @@ contract CoercionResistantVault is IAccount {
         return budget < bal ? budget : bal;
     }
 
-    /// @notice Returns the hot balance for a specific token.
     function tokenHotBalance(address token) external view returns (uint256) {
         return remainingTokenHotBudget(token);
     }
 
-    /// @notice Returns the cold (locked) balance for a specific token.
     function tokenColdBalance(address token) external view returns (uint256) {
         uint256 hot = remainingTokenHotBudget(token);
         uint256 bal = IERC20(token).balanceOf(address(this));
         return bal > hot ? bal - hot : 0;
     }
 
-    /// @notice Returns the spending limit config for a specific token.
     function tokenSpendingLimit(address token)
         external
         view
@@ -426,7 +442,6 @@ contract CoercionResistantVault is IAccount {
         return (state.spendingLimit, state.epochDuration);
     }
 
-    /// @notice Returns the amount already spent in the current epoch for a token.
     function tokenSpentInCurrentEpoch(address token) external view returns (uint256) {
         return tokenEpochs[token].spentInCurrentEpoch;
     }
@@ -437,6 +452,11 @@ contract CoercionResistantVault is IAccount {
 
     function guardianCount() external view returns (uint256) {
         return guardianList.length;
+    }
+
+    /// @notice Returns true if the vault is currently paused.
+    function isPaused() external view returns (bool) {
+        return _isPaused();
     }
 
     function getWithdrawalRequest(uint256 requestId)
@@ -469,11 +489,13 @@ contract CoercionResistantVault is IAccount {
     // ══════════════════════════════════════════════
 
     /**
-     * @notice Spend ETH from the hot balance, subject to the per-epoch spending limit.
-     * @dev Under coercion, the victim can only transfer up to the remaining hot budget.
-     *      The attacker can verify this on-chain — there's no deception involved.
+     * @notice Spend ETH from the hot balance, subject to per-epoch spending limit.
      */
-    function hotSpend(address payable to, uint256 amount) external onlyOwner {
+    function hotSpend(address payable to, uint256 amount)
+        external
+        onlyOwner
+        whenNotPaused
+    {
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert InvalidAmount();
 
@@ -495,14 +517,12 @@ contract CoercionResistantVault is IAccount {
     // ══════════════════════════════════════════════
 
     /**
-     * @notice Spend ERC-20 tokens from the hot balance, subject to per-token
-     *         spending limit.
-     * @dev Same rate-limiting logic as ETH hotSpend, but per-token.
-     *      Token must be configured via setTokenSpendingLimit() first.
+     * @notice Spend ERC-20 tokens from the hot balance.
      */
     function hotSpendToken(address token, address to, uint256 amount)
         external
         onlyOwner
+        whenNotPaused
     {
         if (token == address(0)) revert ZeroAddress();
         if (to == address(0)) revert ZeroAddress();
@@ -534,10 +554,13 @@ contract CoercionResistantVault is IAccount {
     function requestWithdrawal(address payable to, uint256 amount)
         external
         onlyOwner
+        whenNotPaused
         returns (uint256 requestId)
     {
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert InvalidAmount();
+        if (pendingWithdrawalCount >= MAX_PENDING_WITHDRAWALS)
+            revert TooManyPendingWithdrawals(pendingWithdrawalCount, MAX_PENDING_WITHDRAWALS);
 
         _resetEpochIfExpired();
         uint256 cold = address(this).balance - remainingHotBudget();
@@ -547,19 +570,19 @@ contract CoercionResistantVault is IAccount {
     }
 
     /**
-     * @notice Request a token withdrawal from the cold vault. Starts the timelock.
-     * @dev The attacker would need to hold the victim for the entire timelock
-     *      duration (e.g., 72 hours), which is impractical for most scenarios.
-     *      Additionally, any guardian can cancel during this period.
+     * @notice Request a token withdrawal from the cold vault.
      */
     function requestTokenWithdrawal(address token, address payable to, uint256 amount)
         external
         onlyOwner
+        whenNotPaused
         returns (uint256 requestId)
     {
         if (token == address(0)) revert ZeroAddress();
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert InvalidAmount();
+        if (pendingWithdrawalCount >= MAX_PENDING_WITHDRAWALS)
+            revert TooManyPendingWithdrawals(pendingWithdrawalCount, MAX_PENDING_WITHDRAWALS);
 
         _resetTokenEpochIfExpired(token);
         uint256 cold = IERC20(token).balanceOf(address(this)) - remainingTokenHotBudget(token);
@@ -570,11 +593,11 @@ contract CoercionResistantVault is IAccount {
 
     /**
      * @notice Execute a withdrawal (ETH or token) after the timelock has expired.
-     * @dev Anyone can call this once the timelock expires. The funds go to
-     *      the pre-specified recipient, not the caller. Works for both ETH
-     *      and token withdrawals — the token address is stored in the request.
+     * @dev Execution is blocked while the vault is paused. The user's expected
+     *      flow during a pause is to either wait for unpause or cancel the request.
+     *      If urgent liquidity is needed, guardians can unpause via multisig.
      */
-    function executeWithdrawal(uint256 requestId) external {
+    function executeWithdrawal(uint256 requestId) external whenNotPaused {
         WithdrawalRequest storage req = withdrawalRequests[requestId];
         if (req.executed) revert RequestAlreadyExecuted(requestId);
         if (req.cancelled) revert RequestAlreadyCancelled(requestId);
@@ -587,6 +610,7 @@ contract CoercionResistantVault is IAccount {
         }
 
         req.executed = true;
+        pendingWithdrawalCount--;
 
         if (req.token == ETH) {
             (bool success,) = req.to.call{value: req.amount}("");
@@ -601,7 +625,7 @@ contract CoercionResistantVault is IAccount {
 
     /**
      * @notice Cancel a pending withdrawal (ETH or token).
-     * @dev The owner or any guardian can cancel. This is the "panic button."
+     * @dev Callable even while paused — this is a safety action.
      */
     function cancelWithdrawal(uint256 requestId) external onlyOwnerOrGuardian {
         WithdrawalRequest storage req = withdrawalRequests[requestId];
@@ -609,13 +633,13 @@ contract CoercionResistantVault is IAccount {
         if (req.cancelled) revert RequestAlreadyCancelled(requestId);
 
         req.cancelled = true;
+        pendingWithdrawalCount--;
 
         emit WithdrawalCancelled(requestId, msg.sender);
     }
 
     /**
      * @notice Guardian approves a withdrawal, potentially bypassing the timelock.
-     * @dev Works for both ETH and token withdrawals.
      */
     function approveWithdrawal(uint256 requestId) external onlyGuardian {
         WithdrawalRequest storage req = withdrawalRequests[requestId];
@@ -630,14 +654,62 @@ contract CoercionResistantVault is IAccount {
     }
 
     // ══════════════════════════════════════════════
+    //  Emergency Pause
+    // ══════════════════════════════════════════════
+
+    /**
+     * @notice Pause the vault. Any single guardian can invoke this.
+     * @dev Sets pausedUntil to block.timestamp + MAX_PAUSE_DURATION.
+     *      Calling pause() again while paused resets the auto-expiry timer,
+     *      allowing guardians to extend the freeze during sustained attacks.
+     *      Blocks hotSpend, hotSpendToken, requestWithdrawal, execute,
+     *      executeBatch, approveToken, and executeWithdrawal.
+     *      Does NOT block cancelWithdrawal, approveWithdrawal, unpause,
+     *      view functions, or deposits.
+     */
+    function pause() external onlyGuardian {
+        uint256 newPausedUntil = block.timestamp + MAX_PAUSE_DURATION;
+        pausedUntil = newPausedUntil;
+
+        emit VaultPaused(msg.sender, newPausedUntil);
+    }
+
+    /**
+     * @notice Guardian approval toward unpausing the vault.
+     * @dev When approval count reaches multisigThreshold, the vault is unpaused.
+     *      Approvals are scoped to the current pausedUntil timestamp, so
+     *      approvals from a previous pause do not carry over.
+     */
+    function unpause() external onlyGuardian {
+        if (!_isPaused()) revert VaultNotPaused();
+
+        uint256 pauseKey = pausedUntil;
+        if (unpauseApprovedBy[pauseKey][msg.sender]) {
+            revert AlreadyApproved(0, msg.sender);
+        }
+
+        unpauseApprovedBy[pauseKey][msg.sender] = true;
+        unpauseApprovalCount[pauseKey]++;
+
+        emit UnpauseApproved(msg.sender, unpauseApprovalCount[pauseKey]);
+
+        if (unpauseApprovalCount[pauseKey] >= multisigThreshold) {
+            pausedUntil = 0;
+            emit VaultUnpaused(msg.sender);
+        }
+    }
+
+    // ══════════════════════════════════════════════
     //  Configuration — ETH Spending Limit
     // ══════════════════════════════════════════════
 
     /**
-     * @notice Schedule an ETH spending limit increase (subject to timelock).
-     * @dev Decreases take effect immediately (more secure).
-     *      Increases are delayed to prevent an attacker from forcing the owner
-     *      to raise the limit and then drain immediately.
+     * @notice Update the ETH spending limit and/or epoch duration.
+     * @dev Immediate effect when the change is security-neutral or security-increasing:
+     *        - Limit decreases or unchanged AND epoch duration increases or unchanged
+     *      Otherwise (limit increase OR epoch duration decrease), change is timelocked.
+     *      A shorter epoch with the same limit effectively increases spending rate,
+     *      which is why duration decreases are also timelocked.
      */
     function setSpendingLimit(uint256 newLimit, uint256 newEpochDuration)
         external
@@ -645,11 +717,11 @@ contract CoercionResistantVault is IAccount {
     {
         if (newEpochDuration == 0) revert InvalidDuration();
 
-        if (newLimit <= spendingLimit) {
-            spendingLimit = newLimit;
-            epochDuration = newEpochDuration;
-            emit SpendingLimitChanged(newLimit, newEpochDuration);
-        } else {
+        bool isLimitIncrease = newLimit > spendingLimit;
+        bool isDurationDecrease = newEpochDuration < epochDuration;
+
+        if (isLimitIncrease || isDurationDecrease) {
+            // Either change weakens security -> timelock required
             pendingLimitChange = PendingConfigChange({
                 newValue: newLimit,
                 newValue2: newEpochDuration,
@@ -657,10 +729,14 @@ contract CoercionResistantVault is IAccount {
                 active: true
             });
             emit ConfigChangeScheduled("spendingLimit", pendingLimitChange.effectiveTime);
+        } else {
+            // Decrease or unchanged limit + increase or unchanged duration -> immediate
+            spendingLimit = newLimit;
+            epochDuration = newEpochDuration;
+            emit SpendingLimitChanged(newLimit, newEpochDuration);
         }
     }
 
-    /// @notice Execute a scheduled ETH spending limit increase.
     function executeSpendingLimitChange() external onlyOwner {
         if (!pendingLimitChange.active) revert NoActiveConfigChange();
         if (block.timestamp < pendingLimitChange.effectiveTime)
@@ -673,7 +749,6 @@ contract CoercionResistantVault is IAccount {
         emit SpendingLimitChanged(spendingLimit, epochDuration);
     }
 
-    /// @notice Cancel a scheduled ETH spending limit change.
     function cancelSpendingLimitChange() external onlyOwnerOrGuardian {
         pendingLimitChange.active = false;
         emit ConfigChangeCancelled("spendingLimit");
@@ -685,12 +760,9 @@ contract CoercionResistantVault is IAccount {
 
     /**
      * @notice Configure or update the spending limit for an ERC-20 token.
-     * @dev First-time configuration takes effect immediately (the token had
-     *      no hot budget before, so this only adds capability).
-     *      Subsequent increases are timelocked. Decreases are immediate.
-     * @param token      The ERC-20 token address.
-     * @param newLimit   Max tokens spendable per epoch from hot balance.
-     * @param newEpochDuration Epoch duration in seconds for this token.
+     * @dev First-time configuration is immediate (the token had no hot budget).
+     *      Subsequent changes follow the same logic as ETH: limit increases or
+     *      epoch duration decreases require timelock.
      */
     function setTokenSpendingLimit(
         address token,
@@ -702,16 +774,19 @@ contract CoercionResistantVault is IAccount {
 
         TokenEpochState storage state = tokenEpochs[token];
 
-        // First-time config or decrease: immediate effect
-        if (state.epochDuration == 0 || newLimit <= state.spendingLimit) {
+        if (state.epochDuration == 0) {
+            // First-time config: immediate effect
             state.spendingLimit = newLimit;
             state.epochDuration = newEpochDuration;
-            if (state.currentEpochStart == 0) {
-                state.currentEpochStart = block.timestamp;
-            }
+            state.currentEpochStart = block.timestamp;
             emit TokenSpendingLimitChanged(token, newLimit, newEpochDuration);
-        } else {
-            // Increase: must wait for timelock
+            return;
+        }
+
+        bool isLimitIncrease = newLimit > state.spendingLimit;
+        bool isDurationDecrease = newEpochDuration < state.epochDuration;
+
+        if (isLimitIncrease || isDurationDecrease) {
             pendingTokenLimitChange[token] = PendingConfigChange({
                 newValue: newLimit,
                 newValue2: newEpochDuration,
@@ -719,10 +794,13 @@ contract CoercionResistantVault is IAccount {
                 active: true
             });
             emit ConfigChangeScheduled("tokenSpendingLimit", pendingTokenLimitChange[token].effectiveTime);
+        } else {
+            state.spendingLimit = newLimit;
+            state.epochDuration = newEpochDuration;
+            emit TokenSpendingLimitChanged(token, newLimit, newEpochDuration);
         }
     }
 
-    /// @notice Execute a scheduled token spending limit increase.
     function executeTokenSpendingLimitChange(address token) external onlyOwner {
         PendingConfigChange storage change = pendingTokenLimitChange[token];
         if (!change.active) revert NoActiveConfigChange();
@@ -736,7 +814,6 @@ contract CoercionResistantVault is IAccount {
         emit TokenSpendingLimitChanged(token, state.spendingLimit, state.epochDuration);
     }
 
-    /// @notice Cancel a scheduled token spending limit change.
     function cancelTokenSpendingLimitChange(address token) external onlyOwnerOrGuardian {
         pendingTokenLimitChange[token].active = false;
         emit ConfigChangeCancelled("tokenSpendingLimit");
@@ -746,12 +823,6 @@ contract CoercionResistantVault is IAccount {
     //  Configuration — Timelock
     // ══════════════════════════════════════════════
 
-    /**
-     * @notice Schedule a timelock duration decrease (subject to current timelock).
-     * @dev Increases take effect immediately (more secure).
-     *      Decreases are delayed to prevent an attacker from shortening the delay.
-     *      NOTE: Timelock is shared across ETH and all tokens.
-     */
     function setTimelockDuration(uint256 newDuration) external onlyOwner {
         if (newDuration == 0) revert InvalidDuration();
 
@@ -769,7 +840,6 @@ contract CoercionResistantVault is IAccount {
         }
     }
 
-    /// @notice Execute a scheduled timelock decrease.
     function executeTimelockChange() external onlyOwner {
         if (!pendingTimelockChange.active) revert NoActiveConfigChange();
         if (block.timestamp < pendingTimelockChange.effectiveTime)
@@ -781,7 +851,6 @@ contract CoercionResistantVault is IAccount {
         emit TimelockChanged(timelockDuration);
     }
 
-    /// @notice Cancel a scheduled timelock change.
     function cancelTimelockChange() external onlyOwnerOrGuardian {
         pendingTimelockChange.active = false;
         emit ConfigChangeCancelled("timelockDuration");
@@ -791,7 +860,6 @@ contract CoercionResistantVault is IAccount {
     //  Configuration — Guardians
     // ══════════════════════════════════════════════
 
-    /// @notice Schedule a guardian addition/removal (always subject to timelock).
     function setGuardian(address guardian, bool active) external onlyOwner {
         if (guardian == address(0)) revert ZeroAddress();
 
@@ -804,7 +872,12 @@ contract CoercionResistantVault is IAccount {
         emit ConfigChangeScheduled("guardian", pendingGuardianChange[guardian].effectiveTime);
     }
 
-    /// @notice Execute a scheduled guardian change after the timelock.
+    /**
+     * @notice Execute a scheduled guardian change.
+     * @dev If removing a guardian, reverts if the removal would leave
+     *      guardianList.length < multisigThreshold. Owner must explicitly
+     *      reduce multisigThreshold first.
+     */
     function executeGuardianChange(address guardian) external onlyOwner {
         PendingConfigChange storage change = pendingGuardianChange[guardian];
         if (!change.active) revert NoActiveConfigChange();
@@ -818,6 +891,14 @@ contract CoercionResistantVault is IAccount {
             guardianList.push(guardian);
             emit GuardianChanged(guardian, true);
         } else if (!adding && isGuardian[guardian]) {
+            // Guard: removing this guardian would break multisig threshold
+            if (guardianList.length - 1 < multisigThreshold) {
+                revert GuardianRemovalWouldBreakThreshold(
+                    guardianList.length - 1,
+                    multisigThreshold
+                );
+            }
+
             isGuardian[guardian] = false;
             for (uint256 i = 0; i < guardianList.length; i++) {
                 if (guardianList[i] == guardian) {
@@ -830,13 +911,11 @@ contract CoercionResistantVault is IAccount {
         }
     }
 
-    /// @notice Cancel a scheduled guardian change.
     function cancelGuardianChange(address guardian) external onlyOwnerOrGuardian {
         pendingGuardianChange[guardian].active = false;
         emit ConfigChangeCancelled("guardian");
     }
 
-    /// @notice Set multisig threshold.
     function setMultisigThreshold(uint256 threshold) external onlyOwner {
         if (guardianList.length > 0 && threshold < 2) revert InvalidThreshold();
         if (threshold > guardianList.length) revert InvalidThreshold();
@@ -847,22 +926,14 @@ contract CoercionResistantVault is IAccount {
     //  DeFi Execution — Whitelisted targets only
     // ══════════════════════════════════════════════
 
-    /// @notice Returns true if the target is whitelisted for execution.
     function isWhitelisted(address target) external view returns (bool) {
         return whitelistedTargets[target];
     }
 
-    /**
-     * @notice Approve a whitelisted spender to spend vault tokens.
-     * @dev This is the ONLY way to grant ERC-20 allowances from the vault.
-     *      Token contracts MUST NOT be whitelisted — doing so would allow
-     *      execute() to call transfer()/approve() directly, bypassing
-     *      spending limits and this whitelisted-spender check.
-     *      Use amount = 0 to revoke an allowance.
-     */
     function approveToken(address token, address spender, uint256 amount)
         external
         onlyOwner
+        whenNotPaused
     {
         if (token == address(0)) revert ZeroAddress();
         if (spender == address(0)) revert ZeroAddress();
@@ -874,17 +945,10 @@ contract CoercionResistantVault is IAccount {
         emit TokenApproval(token, spender, amount);
     }
 
-    /**
-     * @notice Execute an arbitrary call to a whitelisted target contract.
-     * @dev Allows the vault to interact with DeFi protocols (swaps, LP, etc.)
-     *      while maintaining custody of funds. Only whitelisted contracts can
-     *      be called, and the whitelist itself is managed via timelock.
-     *      ETH value sent via execute() is NOT subject to hot spending limits,
-     *      as DeFi operations are value-preserving exchanges, not spends.
-     */
     function execute(address target, uint256 value, bytes calldata data)
         external
         onlyOwner
+        whenNotPaused
         returns (bytes memory result)
     {
         if (!whitelistedTargets[target]) revert TargetNotWhitelisted(target);
@@ -897,16 +961,11 @@ contract CoercionResistantVault is IAccount {
         emit Executed(target, value, data, result);
     }
 
-    /**
-     * @notice Execute a batch of calls to whitelisted targets atomically.
-     * @dev Useful for multi-step DeFi operations (e.g., approve + swap,
-     *      or approve + addLiquidity). Reverts entirely if any call fails.
-     */
     function executeBatch(
         address[] calldata targets,
         uint256[] calldata values,
         bytes[] calldata datas
-    ) external onlyOwner returns (bytes[] memory results) {
+    ) external onlyOwner whenNotPaused returns (bytes[] memory results) {
         uint256 len = targets.length;
         if (len != values.length || len != datas.length)
             revert BatchLengthMismatch();
@@ -932,22 +991,14 @@ contract CoercionResistantVault is IAccount {
     //  Configuration — Whitelist
     // ══════════════════════════════════════════════
 
-    /**
-     * @notice Add or remove a target contract from the whitelist.
-     * @dev Additions are timelocked (prevents attacker from whitelisting a
-     *      malicious contract and draining via execute() immediately).
-     *      Removals take effect immediately (more restrictive = more secure).
-     */
     function setWhitelistedTarget(address target, bool allowed) external onlyOwner {
         if (target == address(0)) revert ZeroAddress();
         if (target == address(this)) revert SelfCallNotAllowed();
 
         if (!allowed && whitelistedTargets[target]) {
-            // Removal: immediate effect (more secure)
             whitelistedTargets[target] = false;
             emit TargetWhitelisted(target, false);
         } else if (allowed && !whitelistedTargets[target]) {
-            // Addition: subject to timelock
             pendingWhitelistChange[target] = PendingConfigChange({
                 newValue: 1,
                 newValue2: 0,
@@ -958,7 +1009,6 @@ contract CoercionResistantVault is IAccount {
         }
     }
 
-    /// @notice Execute a scheduled whitelist addition after the timelock.
     function executeWhitelistChange(address target) external onlyOwner {
         PendingConfigChange storage change = pendingWhitelistChange[target];
         if (!change.active) revert NoActiveConfigChange();
@@ -970,10 +1020,17 @@ contract CoercionResistantVault is IAccount {
         emit TargetWhitelisted(target, true);
     }
 
-    /// @notice Cancel a scheduled whitelist change.
     function cancelWhitelistChange(address target) external onlyOwnerOrGuardian {
         pendingWhitelistChange[target].active = false;
         emit WhitelistChangeCancelled(target);
+    }
+
+    // ══════════════════════════════════════════════
+    //  Internal — Pause
+    // ══════════════════════════════════════════════
+
+    function _isPaused() internal view returns (bool) {
+        return pausedUntil != 0 && block.timestamp < pausedUntil;
     }
 
     // ══════════════════════════════════════════════
@@ -1024,6 +1081,8 @@ contract CoercionResistantVault is IAccount {
         req.amount = amount;
         req.unlockTime = block.timestamp + timelockDuration;
 
+        pendingWithdrawalCount++;
+
         emit WithdrawalRequested(requestId, token, to, amount, req.unlockTime);
     }
 
@@ -1031,16 +1090,10 @@ contract CoercionResistantVault is IAccount {
     //  Internal — ERC-4337 signature validation
     // ══════════════════════════════════════════════
 
-    /**
-     * @dev Validate the UserOperation signature using ECDSA recovery.
-     *      The userOpHash is signed by the owner's EOA key. We recover
-     *      the signer from the EIP-191 prefixed hash and compare to owner.
-     */
     function _validateSignature(
         PackedUserOperation calldata userOp,
         bytes32 userOpHash
     ) internal view returns (uint256 validationData) {
-        // EIP-191 prefixed hash (what eth_sign / personal_sign produces)
         bytes32 ethSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash)
         );
@@ -1057,7 +1110,6 @@ contract CoercionResistantVault is IAccount {
             v := byte(0, calldataload(add(sig.offset, 0x40)))
         }
 
-        // Reject malleable signatures (EIP-2)
         if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0)
             return SIG_VALIDATION_FAILED;
 
@@ -1068,17 +1120,12 @@ contract CoercionResistantVault is IAccount {
         return SIG_VALIDATION_SUCCESS;
     }
 
-    /**
-     * @dev Pay the EntryPoint the required prefund for gas.
-     *      Only sends if missingAccountFunds > 0.
-     */
     function _payPrefund(uint256 missingAccountFunds) internal {
         if (missingAccountFunds > 0) {
             (bool success,) = payable(msg.sender).call{
                 value: missingAccountFunds,
                 gas: type(uint256).max
             }("");
-            // Ignore failure — EntryPoint will revert if underfunded.
             (success);
         }
     }
