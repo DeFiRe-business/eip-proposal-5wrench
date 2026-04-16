@@ -2,6 +2,10 @@
 ROADMAP.md
 LINKEDIN-ARTICLE.md
 
+# Temporary / working directories
+pr-ready/
+pr-submission/
+
 # OS files
 .DS_Store
 Thumbs.db
@@ -13,15 +17,17 @@ desktop.ini
 *.swp
 *.swo
 
-# Node (if tests are added later)
+# Node
 node_modules/
 package-lock.json
 
-# Foundry (if tests are added later)
+# Foundry artifacts (lib/ is committed as submodule — forge-std pinned)
 out/
 cache/
 broadcast/
 
-# Environment
+# Environment — .env.example IS committed (template), real .env files are not
 .env
-.env.*
+.env.local
+.env.sepolia
+.env.mainnet

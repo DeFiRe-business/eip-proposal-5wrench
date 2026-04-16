@@ -1,0 +1,24 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.20"
+optimizer = true
+optimizer_runs = 200
+verbosity = 2
+evm_version = "shanghai"
+
+# Unit tests are pure Foundry. Fork tests require SEPOLIA_RPC_URL.
+[fuzz]
+runs = 256
+
+[invariant]
+runs = 64
+depth = 32
+
+[rpc_endpoints]
+sepolia = "${SEPOLIA_RPC_URL}"
+
+[etherscan]
+sepolia = { key = "${ETHERSCAN_API_KEY}" }

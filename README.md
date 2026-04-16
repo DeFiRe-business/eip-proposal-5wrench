@@ -38,26 +38,47 @@ A smart contract wallet standard that works like a **bank vault with delayed ope
 - **Timelocked configuration** — Attackers can't force limit increases or timelock reductions
 - **Tokens safe by default** — New tokens deposited have zero hot budget until configured
 - **DeFi execution** — Interact with whitelisted protocols (swaps, LP, etc.) without leaving the vault
+- **Emergency pause** — Any single guardian can freeze the vault for up to 24h; multisig unpause
 - **Whitelisted targets** — Only timelocked-approved contracts can be called via `execute()`
 - **ERC-4337 smart account** — Works as a native smart account with any dApp (Uniswap, Aave, etc.) via compatible wallets
 
 ## Repository contents
 
-| File | Description |
+| Path | Description |
 |---|---|
 | [`ERC-coercion-resistant-vault.md`](./ERC-coercion-resistant-vault.md) | Full ERC proposal draft following EIP-1 template |
-| [`CoercionResistantVault.sol`](./CoercionResistantVault.sol) | Reference implementation in Solidity 0.8.20 (ETH + ERC-20) |
+| [`src/CoercionResistantVault.sol`](./src/CoercionResistantVault.sol) | Reference implementation in Solidity 0.8.20 |
+| [`test/`](./test/) | Foundry test suite — unit tests + Sepolia fork integration |
+| [`foundry.toml`](./foundry.toml) | Foundry project configuration |
+| [`.env.example`](./.env.example) | Environment template (Sepolia RPC, Uniswap addresses) |
 
 ## Architecture
 
 The standard defines three interfaces plus ERC-4337 account abstraction:
 
-- **`ICoercionResistantVault`** (core) — ETH hot/cold balance, timelocks, guardians, multisig
+- **`ICoercionResistantVault`** (core) — ETH hot/cold balance, timelocks, guardians, multisig, emergency pause
 - **`ICoercionResistantVaultTokens`** (extension) — ERC-20 token deposits, per-token spending limits, token cold vault withdrawals
 - **`ICoercionResistantVaultExecutor`** (extension) — DeFi execution via whitelisted targets, `approveToken()`, batch operations, timelock-managed whitelist
 - **`IAccount`** (ERC-4337) — Smart account support via `validateUserOp()`, ECDSA signature validation, EntryPoint integration
 
 All share the same timelock duration, guardian set, and multisig configuration. The separation allows simpler implementations to adopt only the interfaces they need.
+
+## Testing
+
+Unit tests and a Sepolia fork integration test are provided. See [`test/README.md`](./test/README.md) for full instructions.
+
+Quick start:
+
+```bash
+# Install Foundry dependencies
+forge install foundry-rs/forge-std --no-commit
+
+# Run unit tests (no RPC needed)
+forge test --no-match-contract DeFiFork -vv
+
+# Run full suite including Sepolia fork (requires SEPOLIA_RPC_URL in .env)
+cp .env.example .env && source .env && forge test -vvv
+```
 
 ## Key design decisions
 
@@ -71,11 +92,11 @@ The timelock is a security parameter, not an asset-management one. Per-token tim
 
 ### Configuration changes are also timelocked
 
-An attacker cannot force the victim to raise the spending limit and drain immediately — limit increases (ETH or any token) are themselves subject to the timelock delay. Only security-*increasing* changes (lowering limits, extending timelocks) take effect immediately.
+An attacker cannot force the victim to raise the spending limit and drain immediately — limit increases (ETH or any token) are themselves subject to the timelock delay. Epoch duration decreases follow the same rule (shorter epochs with the same limit effectively increase the spending rate). Only security-*increasing* changes (lowering limits, extending timelocks) take effect immediately.
 
-### Guardians can cancel pending withdrawals
+### Guardians can cancel pending withdrawals and pause the vault
 
-If an attacker initiates a cold vault withdrawal and leaves, any guardian can cancel it during the timelock window. This is the "panic button" that makes the timelock actually useful.
+If an attacker initiates a cold vault withdrawal and leaves, any guardian can cancel it during the timelock window. Additionally, any single guardian can invoke `pause()` to freeze all value-moving operations for up to 24 hours (auto-expires; extending requires the guardian to call `pause()` again; explicit early unpause requires multisig). This is the "panic button" that makes the timelock actually useful.
 
 ### Rate-limited, not pooled
 
@@ -96,7 +117,7 @@ The vault implements `IAccount` (ERC-4337 v0.7), making it a native smart accoun
 3. The owner signs with their EOA key, a bundler submits to the EntryPoint
 4. EntryPoint validates the signature via `validateUserOp()` and executes
 
-All vault security rules (spending limits, timelocks, whitelist) apply identically whether the call comes directly from the owner or through the EntryPoint. The owner's EOA key is the "remote control" — it can sign UserOperations but holds no funds.
+All vault security rules (spending limits, timelocks, whitelist, pause state) apply identically whether the call comes directly from the owner or through the EntryPoint. The owner's EOA key is the "remote control" — it can sign UserOperations but holds no funds.
 
 ## Recommended configurations
 
@@ -124,9 +145,9 @@ All vault security rules (spending limits, timelocks, whitelist) apply identical
 ## Roadmap
 
 1. **✅ Pre-draft** — ERC document and reference implementation (this repo)
-2. **⬜ Community feedback** — Publish on [Ethereum Magicians](https://ethereum-magicians.org)
-3. **⬜ Formal submission** — PR to [ethereum/EIPs](https://github.com/ethereum/EIPs)
-4. **⬜ Testing** — Foundry test suite + testnet deployment
+2. **✅ Community feedback** — [Ethereum Magicians discussion](https://ethereum-magicians.org/t/erc-coercion-resistant-vault-spending-limits-timelock-multisig-against-5-wrench-attacks/28130)
+3. **✅ Foundry test suite** — Unit tests + Sepolia fork integration
+4. **⬜ Formal submission** — PR to [ethereum/ERCs](https://github.com/ethereum/ERCs)
 5. **⬜ Audit** — Security review by recognized firm
 6. **⬜ Adoption** — Integration with wallet providers (Safe, MetaMask, etc.)
 

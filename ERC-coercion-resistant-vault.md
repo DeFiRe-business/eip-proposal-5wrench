@@ -852,8 +852,10 @@ at any time.
 
 ## Reference Implementation
 
-See [`CoercionResistantVault.sol`](./CoercionResistantVault.sol) for a complete reference
-implementation supporting both native ETH and ERC-20 tokens.
+See [`src/CoercionResistantVault.sol`](./src/CoercionResistantVault.sol) for a complete reference
+implementation supporting both native ETH and ERC-20 tokens. A comprehensive Foundry test
+suite — unit tests plus a Sepolia fork integration test that exercises the vault against
+real WETH9 and Uniswap V3 contracts — is available in [`test/`](./test/).
 
 ## Security Considerations
 
