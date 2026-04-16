@@ -142,15 +142,6 @@ All vault security rules (spending limits, timelocks, whitelist, pause state) ap
 
 > **Aggregate exposure note:** The sum of all per-token hot budgets is the maximum an attacker can extract in one epoch. 10 tokens × $1,000/day each = $10,000 total immediate exposure.
 
-## Roadmap
-
-1. **✅ Pre-draft** — ERC document and reference implementation (this repo)
-2. **✅ Community feedback** — [Ethereum Magicians discussion](https://ethereum-magicians.org/t/erc-coercion-resistant-vault-spending-limits-timelock-multisig-against-5-wrench-attacks/28130)
-3. **✅ Foundry test suite** — Unit tests + Sepolia fork integration
-4. **⬜ Formal submission** — PR to [ethereum/ERCs](https://github.com/ethereum/ERCs)
-5. **⬜ Audit** — Security review by recognized firm
-6. **⬜ Adoption** — Integration with wallet providers (Safe, MetaMask, etc.)
-
 ## Contributing
 
 This is a pre-draft proposal. Feedback, issues, and PRs are welcome.
