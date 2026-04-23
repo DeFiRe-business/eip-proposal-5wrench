@@ -3,17 +3,36 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Coercion-Resistant Vault — Demo</title>
+  <title>Coercion-Resistant Vault — DeFiRe Labs</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+
+  <!-- DeFiRe Labs top bar -->
+  <div class="topbar">
+    <div class="container topbar-inner">
+      <a href="https://defire.business/" target="_blank" rel="noopener" class="brand">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="24" height="24" rx="6" fill="#6c8eff"/>
+          <path d="M7 7h4a5 5 0 0 1 0 10H7V7z" stroke="#0b0f17" stroke-width="2" fill="none"/>
+          <circle cx="17" cy="12" r="2" fill="#ff9f6b"/>
+        </svg>
+        <span>DeFiRe Labs</span>
+      </a>
+      <nav class="topbar-nav">
+        <a href="docs-en.html">Docs (EN)</a>
+        <a href="docs-es.html">Docs (ES)</a>
+        <a href="https://github.com/DeFiRe-business/eip-proposal-5wrench" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </div>
+
   <header>
     <div class="container">
       <div class="header-row">
         <h1>Coercion-Resistant Vault</h1>
         <div class="header-right">
-          <a href="https://github.com/DeFiRe-business/eip-proposal-5wrench"
-             target="_blank" rel="noopener" class="source-link">GitHub</a>
+          <span class="erc-badge">ERC-8300</span>
           <button id="connect-btn" class="primary">Connect MetaMask</button>
         </div>
       </div>
@@ -26,55 +45,48 @@
 
   <main class="container">
 
-    <!-- ══════════════════════════════════════════ -->
-    <!--  Connection status -->
-    <!-- ══════════════════════════════════════════ -->
+    <!-- Connection status -->
     <section id="connection-section" class="card">
       <div id="wallet-status">
         <p class="muted">Not connected. Click "Connect MetaMask" to begin.</p>
       </div>
     </section>
 
-    <!-- ══════════════════════════════════════════ -->
-    <!--  Vault overview -->
-    <!-- ══════════════════════════════════════════ -->
+    <!-- Vault overview -->
     <section id="overview-section" class="card" hidden>
       <h2>Vault state</h2>
       <div class="grid grid-3">
         <div class="stat">
           <div class="stat-label">Total balance</div>
-          <div class="stat-value" id="vault-total">—</div>
+          <div class="stat-value" id="vault-total">--</div>
           <div class="stat-sub">ETH in vault</div>
         </div>
         <div class="stat stat-hot">
           <div class="stat-label">Hot (immediately spendable)</div>
-          <div class="stat-value" id="vault-hot">—</div>
-          <div class="stat-sub"><span id="vault-spent">—</span> spent this epoch</div>
+          <div class="stat-value" id="vault-hot">--</div>
+          <div class="stat-sub"><span id="vault-spent">--</span> spent this epoch</div>
         </div>
         <div class="stat stat-cold">
           <div class="stat-label">Cold (timelocked)</div>
-          <div class="stat-value" id="vault-cold">—</div>
-          <div class="stat-sub"><span id="timelock-duration">—</span> unlock delay</div>
+          <div class="stat-value" id="vault-cold">--</div>
+          <div class="stat-sub"><span id="timelock-duration">--</span> unlock delay</div>
         </div>
       </div>
 
       <div class="meta-grid">
-        <div><span class="meta-label">Vault:</span> <a id="vault-address" target="_blank" rel="noopener">—</a></div>
-        <div><span class="meta-label">Owner:</span> <span id="vault-owner">—</span></div>
-        <div><span class="meta-label">Spending limit:</span> <span id="vault-limit">—</span> / <span id="vault-epoch">—</span></div>
-        <div><span class="meta-label">Guardians:</span> <span id="vault-guardians">—</span> (threshold <span id="vault-threshold">—</span>)</div>
-        <div><span class="meta-label">Paused:</span> <span id="vault-paused">—</span></div>
-        <div><span class="meta-label">Pending withdrawals:</span> <span id="vault-pending">—</span></div>
+        <div><span class="meta-label">Vault:</span> <a id="vault-address" target="_blank" rel="noopener">--</a></div>
+        <div><span class="meta-label">Owner:</span> <span id="vault-owner">--</span></div>
+        <div><span class="meta-label">Spending limit:</span> <span id="vault-limit">--</span> / <span id="vault-epoch">--</span></div>
+        <div><span class="meta-label">Guardians:</span> <span id="vault-guardians">--</span> (threshold <span id="vault-threshold">--</span>)</div>
+        <div><span class="meta-label">Paused:</span> <span id="vault-paused">--</span></div>
+        <div><span class="meta-label">Pending withdrawals:</span> <span id="vault-pending">--</span></div>
       </div>
     </section>
 
-    <!-- ══════════════════════════════════════════ -->
-    <!--  Actions -->
-    <!-- ══════════════════════════════════════════ -->
+    <!-- Actions -->
     <section id="actions-section" hidden>
       <div class="grid grid-2">
 
-        <!-- Deposit -->
         <div class="card">
           <h3>Deposit ETH</h3>
           <p class="muted">Send Sepolia ETH into the vault. Anyone can deposit.</p>
@@ -84,7 +96,6 @@
           </div>
         </div>
 
-        <!-- Hot spend -->
         <div class="card">
           <h3>Hot spend</h3>
           <p class="muted">Instant transfer from the rate-limited hot balance. Owner only.</p>
@@ -97,11 +108,10 @@
           </div>
         </div>
 
-        <!-- Cold withdrawal -->
         <div class="card">
           <h3>Cold withdrawal</h3>
           <p class="muted">
-            Request a large withdrawal. Starts the timelock — funds become
+            Request a large withdrawal. Starts the timelock -- funds become
             transferable after the delay, OR guardians can bypass with multisig.
           </p>
           <div class="input-row">
@@ -113,12 +123,11 @@
           </div>
         </div>
 
-        <!-- Uniswap swap -->
         <div class="card card-highlight">
-          <h3>DeFi: Swap on Uniswap V3 ⚡</h3>
+          <h3>DeFi: Swap on Uniswap V3</h3>
           <p class="muted">
-            Execute a WETH → USDC swap via Uniswap SwapRouter02. The vault wraps
-            ETH, approves the router, and swaps — all while the hot spending
+            Execute a WETH to USDC swap via Uniswap SwapRouter02. The vault wraps
+            ETH, approves the router, and swaps -- all while the hot spending
             counter stays at zero (value-preserving operation).
           </p>
           <div class="input-row">
@@ -126,14 +135,13 @@
             <button id="swap-btn" class="primary">Wrap + Swap</button>
           </div>
           <p class="muted small">
-            This runs three transactions: whitelist the router (if not already),
-            wrap ETH via <code>execute()</code>, then swap via <code>execute()</code>.
+            This runs three transactions: wrap ETH via <code>execute()</code>,
+            approve router, then swap via <code>execute()</code>.
           </p>
         </div>
 
       </div>
 
-      <!-- Pending withdrawals table -->
       <div class="card">
         <h3>Pending withdrawals</h3>
         <div id="pending-list">
@@ -142,9 +150,7 @@
       </div>
     </section>
 
-    <!-- ══════════════════════════════════════════ -->
-    <!--  Activity log -->
-    <!-- ══════════════════════════════════════════ -->
+    <!-- Activity log -->
     <section id="log-section" class="card" hidden>
       <div class="log-header">
         <h3>Activity log</h3>
@@ -156,11 +162,23 @@
   </main>
 
   <footer>
-    <div class="container">
-      <p class="muted small">
-        Reference implementation for ERC: Coercion-Resistant Vault Standard.
-        This demo runs on Sepolia testnet — no real funds are at risk.
-      </p>
+    <div class="container footer-inner">
+      <div class="footer-left">
+        <a href="https://defire.business/" target="_blank" rel="noopener" class="brand brand-footer">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="24" height="24" rx="6" fill="#6c8eff"/>
+            <path d="M7 7h4a5 5 0 0 1 0 10H7V7z" stroke="#0b0f17" stroke-width="2" fill="none"/>
+            <circle cx="17" cy="12" r="2" fill="#ff9f6b"/>
+          </svg>
+          <span>DeFiRe Labs</span>
+        </a>
+        <span class="muted small">ERC-8300 reference implementation. Sepolia testnet only.</span>
+      </div>
+      <div class="footer-right">
+        <a href="docs-en.html" class="muted small">Docs (EN)</a>
+        <a href="docs-es.html" class="muted small">Docs (ES)</a>
+        <a href="https://github.com/ethereum/ERCs/pull/1703" target="_blank" rel="noopener" class="muted small">ERC PR #1703</a>
+      </div>
     </div>
   </footer>
 

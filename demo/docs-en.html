@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Documentation — Coercion-Resistant Vault — DeFiRe Labs</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="container topbar-inner">
+      <a href="https://defire.business/" target="_blank" rel="noopener" class="brand">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="24" height="24" rx="6" fill="#6c8eff"/>
+          <path d="M7 7h4a5 5 0 0 1 0 10H7V7z" stroke="#0b0f17" stroke-width="2" fill="none"/>
+          <circle cx="17" cy="12" r="2" fill="#ff9f6b"/>
+        </svg>
+        <span>DeFiRe Labs</span>
+      </a>
+      <nav class="topbar-nav">
+        <a href="index.html">Demo</a>
+        <a href="docs-en.html" style="color: var(--text);">Docs (EN)</a>
+        <a href="docs-es.html">Docs (ES)</a>
+        <a href="https://github.com/DeFiRe-business/eip-proposal-5wrench" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </div>
+
+  <div class="docs-content">
+
+    <h1>Coercion-Resistant Vault</h1>
+    <p class="muted">ERC-8300 | Step-by-step guide</p>
+    <div class="lang-switch">
+      <a href="docs-en.html" class="active">English</a>
+      <a href="docs-es.html">Espanol</a>
+    </div>
+
+    <h2>What is this?</h2>
+    <p>
+      The Coercion-Resistant Vault is a smart contract wallet designed to protect
+      cryptocurrency holders against physical coercion attacks (known as "$5 wrench
+      attacks"). It partitions your funds into two tiers:
+    </p>
+    <ul>
+      <li><strong>Hot balance</strong> -- a small amount you can spend immediately, subject to a daily rate limit (e.g., 0.05 ETH per day).</li>
+      <li><strong>Cold vault</strong> -- the bulk of your funds, locked behind a timelock (e.g., 5 minutes to 72 hours) and/or requiring guardian approval to unlock.</li>
+    </ul>
+    <p>
+      Under coercion, you can truthfully say: <em>"I can only send you this much right now.
+      The rest is locked and I physically cannot access it faster."</em> The constraint
+      is verifiable on-chain -- no deception needed.
+    </p>
+
+    <h2>Prerequisites</h2>
+    <div class="step">
+      <p><span class="step-number">1</span><strong>MetaMask browser extension</strong></p>
+      <p>Install MetaMask from <code>metamask.io</code> if you don't have it. It works on Chrome, Firefox, Brave, and Edge.</p>
+    </div>
+    <div class="step">
+      <p><span class="step-number">2</span><strong>Switch to Sepolia testnet</strong></p>
+      <p>Open MetaMask, click the network dropdown (top-left), and select <strong>Sepolia test network</strong>. If you don't see it, enable "Show test networks" in MetaMask settings.</p>
+    </div>
+    <div class="step">
+      <p><span class="step-number">3</span><strong>Get Sepolia ETH</strong></p>
+      <p>You need a small amount of Sepolia ETH (free, no real value) to interact with the vault. Get some from a faucet:</p>
+      <ul>
+        <li><code>sepoliafaucet.com</code></li>
+        <li><code>cloud.google.com/application/web3/faucet/ethereum/sepolia</code></li>
+      </ul>
+      <p>Paste your MetaMask address and request ETH. It usually arrives in under a minute.</p>
+    </div>
+
+    <h2>Connecting to the vault</h2>
+    <div class="step">
+      <p><span class="step-number">4</span><strong>Open the demo</strong></p>
+      <p>Go to the <a href="index.html">demo page</a> in the same browser where MetaMask is installed.</p>
+    </div>
+    <div class="step">
+      <p><span class="step-number">5</span><strong>Click "Connect MetaMask"</strong></p>
+      <p>MetaMask will pop up asking you to connect. Select the account you want to use and click "Connect". The demo will automatically switch you to Sepolia if you're on a different network.</p>
+    </div>
+    <div class="step">
+      <p><span class="step-number">6</span><strong>Check your role</strong></p>
+      <p>After connecting, the banner at the top will show:</p>
+      <ul>
+        <li><strong>Vault owner</strong> -- you can deposit, spend from hot balance, request cold withdrawals, and execute DeFi swaps.</li>
+        <li><strong>Not the owner</strong> -- you can only deposit ETH into the vault and view its state. This is normal if your address is not the vault's owner address.</li>
+      </ul>
+    </div>
+
+    <h2>Understanding the dashboard</h2>
+    <p>Once connected, the dashboard shows the vault's real-time state:</p>
+    <ul>
+      <li><strong>Total balance</strong> -- all ETH held by the vault contract.</li>
+      <li><strong>Hot balance</strong> (orange border) -- the amount you can spend right now without waiting. This is capped by the spending limit per epoch.</li>
+      <li><strong>Cold balance</strong> (blue border) -- the locked portion. Withdrawing from here requires waiting the timelock or getting guardian approval.</li>
+      <li><strong>Spent this epoch</strong> -- how much of the hot budget you've used in the current 24-hour window.</li>
+      <li><strong>Unlock delay</strong> -- the timelock duration for cold withdrawals (e.g., 5 minutes in the demo).</li>
+    </ul>
+
+    <h2>Actions: step by step</h2>
+
+    <h3>Deposit ETH</h3>
+    <div class="step">
+      <p>Anyone can deposit ETH into the vault, even if they're not the owner.</p>
+      <ol>
+        <li>Enter an amount in the "Deposit ETH" field (e.g., 0.05).</li>
+        <li>Click <strong>Deposit</strong>.</li>
+        <li>MetaMask will ask you to confirm the transaction. Click "Confirm".</li>
+        <li>Wait for the transaction to be mined (usually 12-15 seconds on Sepolia).</li>
+        <li>The dashboard updates automatically showing the new balance.</li>
+      </ol>
+    </div>
+
+    <h3>Hot spend (instant transfer)</h3>
+    <div class="step">
+      <p>Send ETH from the hot balance to any address. Subject to the daily spending limit.</p>
+      <ol>
+        <li>Enter a recipient address in the "Recipient address" field.</li>
+        <li>Enter an amount within your remaining hot budget.</li>
+        <li>Click <strong>Hot Spend</strong>.</li>
+        <li>Confirm in MetaMask.</li>
+        <li>The transfer is instant. The "spent this epoch" counter increases.</li>
+      </ol>
+      <div class="callout-warn callout">
+        If you try to spend more than the remaining hot budget, the transaction will revert with "ExceedsHotBudget". The hot budget resets every 24 hours.
+      </div>
+    </div>
+
+    <h3>Cold withdrawal (timelocked)</h3>
+    <div class="step">
+      <p>Request a withdrawal from the cold vault. The funds are locked until the timelock expires.</p>
+      <ol>
+        <li>Enter the recipient address and amount.</li>
+        <li>Click <strong>Request Withdrawal</strong>.</li>
+        <li>Confirm in MetaMask.</li>
+        <li>A new entry appears in the "Pending withdrawals" table with a countdown timer.</li>
+        <li>When the countdown reaches zero, click <strong>Execute</strong> to complete the transfer.</li>
+      </ol>
+      <div class="callout">
+        Any guardian (or the owner) can <strong>Cancel</strong> a pending withdrawal at any time before it's executed. This is the "panic button" -- if an attacker forced you to request a withdrawal, your guardians can cancel it during the timelock window.
+      </div>
+    </div>
+
+    <h3>DeFi swap on Uniswap V3</h3>
+    <div class="step">
+      <p>The flagship demo: swap ETH for USDC through the vault, using real Uniswap contracts on Sepolia.</p>
+      <ol>
+        <li>Enter an amount of ETH to swap (e.g., 0.001).</li>
+        <li>Click <strong>Wrap + Swap</strong>.</li>
+        <li>MetaMask will ask for <strong>3 separate confirmations</strong>:</li>
+      </ol>
+      <ul>
+        <li><strong>Transaction 1</strong>: Wrap ETH into WETH via <code>execute(WETH, deposit())</code></li>
+        <li><strong>Transaction 2</strong>: Approve the Uniswap router to spend WETH via <code>approveToken()</code></li>
+        <li><strong>Transaction 3</strong>: Execute the swap via <code>execute(router, exactInputSingle(...))</code></li>
+      </ul>
+      <p>After all three confirm, the vault holds USDC. The activity log shows the received amount.</p>
+      <div class="callout">
+        <strong>Key insight:</strong> The hot spending counter stays at zero during the swap. DeFi operations via <code>execute()</code> are value-preserving (you exchange ETH for equivalent USDC), so they bypass the spending limit. Only direct transfers via <code>hotSpend()</code> consume the budget.
+      </div>
+    </div>
+
+    <h2>Security model</h2>
+
+    <h3>Why this works under coercion</h3>
+    <p>
+      If an attacker forces you to transfer funds, you can only send the hot balance
+      (a small amount). The rest is locked behind the timelock. The attacker can verify
+      this on-chain -- you're not hiding anything. Requesting a cold withdrawal starts
+      a countdown that gives you (or your guardians) time to cancel it after the
+      attacker leaves.
+    </p>
+
+    <h3>Guardians</h3>
+    <p>
+      Guardians are trusted addresses (family, friends, institutional custodians) who can:
+    </p>
+    <ul>
+      <li><strong>Cancel</strong> pending cold withdrawals (panic button).</li>
+      <li><strong>Approve</strong> cold withdrawals instantly via multisig (bypasses timelock when 2+ guardians agree).</li>
+      <li><strong>Pause</strong> the entire vault in an emergency (freezes all value-moving operations for up to 24 hours).</li>
+      <li><strong>Unpause</strong> the vault before the auto-expiry (requires multisig approval).</li>
+    </ul>
+
+    <h3>Configuration is also protected</h3>
+    <p>
+      An attacker cannot force you to raise the spending limit and drain immediately.
+      Limit increases are timelocked just like cold withdrawals. Only limit decreases
+      (which make the vault more secure) take effect immediately.
+    </p>
+
+    <h2>Contracts and links</h2>
+    <ul>
+      <li><strong>Vault contract (Sepolia):</strong> <code>0x7B36499A730341c7BdaA6A603c525d54416cD0Ab</code></li>
+      <li><strong>ERC-8300 PR:</strong> <code>github.com/ethereum/ERCs/pull/1703</code></li>
+      <li><strong>Source code:</strong> <code>github.com/DeFiRe-business/eip-proposal-5wrench</code></li>
+      <li><strong>Ethereum Magicians thread:</strong> <code>ethereum-magicians.org/t/28130</code></li>
+    </ul>
+
+    <h2>FAQ</h2>
+
+    <h3>Is this using real money?</h3>
+    <p>No. This demo runs on Sepolia testnet. Sepolia ETH has no real value. You can get it for free from faucets.</p>
+
+    <h3>Why does my cold withdrawal say "ExceedsColdBalance"?</h3>
+    <p>Your vault's total balance is smaller than the spending limit, so all ETH is in the hot bucket and the cold balance is zero. Deposit more ETH so the total exceeds the spending limit.</p>
+
+    <h3>Why does the Uniswap swap fail?</h3>
+    <p>The WETH/USDC pool on Sepolia sometimes has low liquidity. The ETH-to-WETH wrap step always works and proves the mechanism. If the swap fails, the activity log will show the reason.</p>
+
+    <h3>Can I deploy my own vault?</h3>
+    <p>Yes. The full source code, deployment scripts, and instructions are in the GitHub repository. You need Foundry installed and a Sepolia RPC endpoint (free from Alchemy or Infura).</p>
+
+  </div>
+
+  <footer>
+    <div class="container footer-inner">
+      <div class="footer-left">
+        <a href="https://defire.business/" target="_blank" rel="noopener" class="brand brand-footer">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="24" height="24" rx="6" fill="#6c8eff"/>
+            <path d="M7 7h4a5 5 0 0 1 0 10H7V7z" stroke="#0b0f17" stroke-width="2" fill="none"/>
+            <circle cx="17" cy="12" r="2" fill="#ff9f6b"/>
+          </svg>
+          <span>DeFiRe Labs</span>
+        </a>
+      </div>
+      <div class="footer-right">
+        <a href="index.html" class="muted small">Demo</a>
+        <a href="docs-es.html" class="muted small">Docs (ES)</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
