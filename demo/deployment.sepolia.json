@@ -1,0 +1,25 @@
+{
+  "_comment": "Deployed via forge script script/Deploy.s.sol:Deploy on Sepolia",
+  "network": "sepolia",
+  "chainId": 11155111,
+  "vault": "0x7B36499A730341c7BdaA6A603c525d54416cD0Ab",
+  "owner": "0x4BcB390B3306d31B8a7820b65D130c94e6E09A91",
+  "guardians": [
+    "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+    "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+  ],
+  "entryPoint": "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+  "weth": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+  "uniswapRouter": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
+  "usdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+  "config": {
+    "spendingLimit": "50000000000000000",
+    "spendingLimitHuman": "0.05 ETH",
+    "epochDuration": 86400,
+    "epochDurationHuman": "24 hours",
+    "timelockDuration": 300,
+    "timelockDurationHuman": "5 minutes",
+    "multisigThreshold": 2
+  }
+}

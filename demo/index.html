@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Coercion-Resistant Vault — Demo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="header-row">
+        <h1>Coercion-Resistant Vault</h1>
+        <div class="header-right">
+          <a href="https://github.com/DeFiRe-business/eip-proposal-5wrench"
+             target="_blank" rel="noopener" class="source-link">GitHub</a>
+          <button id="connect-btn" class="primary">Connect MetaMask</button>
+        </div>
+      </div>
+      <p class="subtitle">
+        Live demo on Sepolia — a smart contract wallet that protects against
+        physical coercion through spending limits, timelocks, and multisig.
+      </p>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ══════════════════════════════════════════ -->
+    <!--  Connection status -->
+    <!-- ══════════════════════════════════════════ -->
+    <section id="connection-section" class="card">
+      <div id="wallet-status">
+        <p class="muted">Not connected. Click "Connect MetaMask" to begin.</p>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!--  Vault overview -->
+    <!-- ══════════════════════════════════════════ -->
+    <section id="overview-section" class="card" hidden>
+      <h2>Vault state</h2>
+      <div class="grid grid-3">
+        <div class="stat">
+          <div class="stat-label">Total balance</div>
+          <div class="stat-value" id="vault-total">—</div>
+          <div class="stat-sub">ETH in vault</div>
+        </div>
+        <div class="stat stat-hot">
+          <div class="stat-label">Hot (immediately spendable)</div>
+          <div class="stat-value" id="vault-hot">—</div>
+          <div class="stat-sub"><span id="vault-spent">—</span> spent this epoch</div>
+        </div>
+        <div class="stat stat-cold">
+          <div class="stat-label">Cold (timelocked)</div>
+          <div class="stat-value" id="vault-cold">—</div>
+          <div class="stat-sub"><span id="timelock-duration">—</span> unlock delay</div>
+        </div>
+      </div>
+
+      <div class="meta-grid">
+        <div><span class="meta-label">Vault:</span> <a id="vault-address" target="_blank" rel="noopener">—</a></div>
+        <div><span class="meta-label">Owner:</span> <span id="vault-owner">—</span></div>
+        <div><span class="meta-label">Spending limit:</span> <span id="vault-limit">—</span> / <span id="vault-epoch">—</span></div>
+        <div><span class="meta-label">Guardians:</span> <span id="vault-guardians">—</span> (threshold <span id="vault-threshold">—</span>)</div>
+        <div><span class="meta-label">Paused:</span> <span id="vault-paused">—</span></div>
+        <div><span class="meta-label">Pending withdrawals:</span> <span id="vault-pending">—</span></div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!--  Actions -->
+    <!-- ══════════════════════════════════════════ -->
+    <section id="actions-section" hidden>
+      <div class="grid grid-2">
+
+        <!-- Deposit -->
+        <div class="card">
+          <h3>Deposit ETH</h3>
+          <p class="muted">Send Sepolia ETH into the vault. Anyone can deposit.</p>
+          <div class="input-row">
+            <input type="number" id="deposit-amount" step="0.001" min="0" value="0.05" placeholder="Amount in ETH" />
+            <button id="deposit-btn" class="primary">Deposit</button>
+          </div>
+        </div>
+
+        <!-- Hot spend -->
+        <div class="card">
+          <h3>Hot spend</h3>
+          <p class="muted">Instant transfer from the rate-limited hot balance. Owner only.</p>
+          <div class="input-row">
+            <input type="text" id="hotspend-to" placeholder="Recipient address (0x...)" />
+          </div>
+          <div class="input-row">
+            <input type="number" id="hotspend-amount" step="0.001" min="0" value="0.01" placeholder="Amount in ETH" />
+            <button id="hotspend-btn" class="primary">Hot Spend</button>
+          </div>
+        </div>
+
+        <!-- Cold withdrawal -->
+        <div class="card">
+          <h3>Cold withdrawal</h3>
+          <p class="muted">
+            Request a large withdrawal. Starts the timelock — funds become
+            transferable after the delay, OR guardians can bypass with multisig.
+          </p>
+          <div class="input-row">
+            <input type="text" id="coldwithdraw-to" placeholder="Recipient address (0x...)" />
+          </div>
+          <div class="input-row">
+            <input type="number" id="coldwithdraw-amount" step="0.001" min="0" value="0.1" placeholder="Amount in ETH" />
+            <button id="coldwithdraw-btn" class="primary">Request Withdrawal</button>
+          </div>
+        </div>
+
+        <!-- Uniswap swap -->
+        <div class="card card-highlight">
+          <h3>DeFi: Swap on Uniswap V3 ⚡</h3>
+          <p class="muted">
+            Execute a WETH → USDC swap via Uniswap SwapRouter02. The vault wraps
+            ETH, approves the router, and swaps — all while the hot spending
+            counter stays at zero (value-preserving operation).
+          </p>
+          <div class="input-row">
+            <input type="number" id="swap-amount" step="0.001" min="0" value="0.01" placeholder="Amount in ETH" />
+            <button id="swap-btn" class="primary">Wrap + Swap</button>
+          </div>
+          <p class="muted small">
+            This runs three transactions: whitelist the router (if not already),
+            wrap ETH via <code>execute()</code>, then swap via <code>execute()</code>.
+          </p>
+        </div>
+
+      </div>
+
+      <!-- Pending withdrawals table -->
+      <div class="card">
+        <h3>Pending withdrawals</h3>
+        <div id="pending-list">
+          <p class="muted">No pending withdrawals.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!--  Activity log -->
+    <!-- ══════════════════════════════════════════ -->
+    <section id="log-section" class="card" hidden>
+      <div class="log-header">
+        <h3>Activity log</h3>
+        <button id="clear-log" class="ghost small">Clear</button>
+      </div>
+      <div id="log"></div>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="container">
+      <p class="muted small">
+        Reference implementation for ERC: Coercion-Resistant Vault Standard.
+        This demo runs on Sepolia testnet — no real funds are at risk.
+      </p>
+    </div>
+  </footer>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "ethers": "https://esm.sh/ethers@6.13.4"
+      }
+    }
+  </script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
