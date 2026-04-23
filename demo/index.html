@@ -7,70 +7,25 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-
-  <header>
-    <div class="container header-row">
-      <a href="https://defire.business/" target="_blank" rel="noopener" class="brand">
-        <svg width="28" height="28" viewBox="0 0 76 76" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <defs><linearGradient id="dg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#8B5CF6"/><stop offset="50%" stop-color="#6366F1"/><stop offset="100%" stop-color="#3B82F6"/></linearGradient></defs>
-          <path fill="url(#dg)" d="M16,9.57C16,9.57,54,9,54,9c3.78.01,7.63-.22,10.98,1.85C70.6,14.33,70.97,19.06,71,25v31c-.06,4.7-.49,10.22-4.22,13.57-3.85,3.45-9.93,3.42-14.78,3.43H22c-4.26-.06-7.52-.22-10.87-3.28C7.37,66.29,7.06,62.76,7,58V25c.04-7.86,1.03-12.3,9-15.43ZM28,52c4.57,0,14.28.81,17.87-1.74,5.97-4.24,5.72-18.5-.91-22.09C41.69,26.41,32.06,27,28,27v4h4c0,5.91,1.79,13.73-4,17v4ZM37,31c1.93.23,3.91.27,5.33,1.74,2.28,2.16,2.4,11.27,0,13.27-1.42,1.09-3.69.95-5.33,1V31Z"/>
-        </svg>
-        <span>DeFiRe Labs</span>
-      </a>
-
-      <div class="header-center">
-        <span class="erc-badge">ERC-8300</span>
-        <a href="https://github.com/DeFiRe-business/eip-proposal-5wrench" target="_blank" rel="noopener" class="nav-link">GitHub</a>
-        <a id="docs-link" href="docs-en.html" class="nav-link">Docs</a>
-        <div class="lang-dropdown">
-          <button id="lang-btn" class="lang-toggle" type="button">EN <span class="caret">&#9662;</span></button>
-          <div class="lang-menu" id="lang-menu">
-            <button data-lang="en" class="lang-option active">English</button>
-            <button data-lang="es" class="lang-option">Espanol</button>
-          </div>
-        </div>
-      </div>
-
-      <button id="connect-btn" class="primary">Connect MetaMask</button>
-    </div>
-  </header>
+  <header id="site-header"></header>
+  <script src="header.js"></script>
 
   <main class="container">
-
     <section class="hero">
       <h1>Coercion-Resistant Vault</h1>
-      <p class="subtitle">
-        Live demo on Sepolia — a smart contract wallet that protects against
-        physical coercion through spending limits, timelocks, and multisig.
-      </p>
+      <p class="subtitle">Live demo on Sepolia — a smart contract wallet that protects against physical coercion through spending limits, timelocks, and multisig.</p>
     </section>
 
-    <!-- Connection status -->
     <section id="connection-section" class="card">
-      <div id="wallet-status">
-        <p class="muted">Not connected. Click "Connect MetaMask" to begin.</p>
-      </div>
+      <div id="wallet-status"><p class="muted">Not connected. Click "Connect MetaMask" to begin.</p></div>
     </section>
 
-    <!-- Vault overview -->
     <section id="overview-section" class="card" hidden>
       <h2>Vault state</h2>
       <div class="grid grid-3">
-        <div class="stat">
-          <div class="stat-label">Total balance</div>
-          <div class="stat-value" id="vault-total">--</div>
-          <div class="stat-sub">ETH in vault</div>
-        </div>
-        <div class="stat stat-hot">
-          <div class="stat-label">Hot (immediately spendable)</div>
-          <div class="stat-value" id="vault-hot">--</div>
-          <div class="stat-sub"><span id="vault-spent">--</span> spent this epoch</div>
-        </div>
-        <div class="stat stat-cold">
-          <div class="stat-label">Cold (timelocked)</div>
-          <div class="stat-value" id="vault-cold">--</div>
-          <div class="stat-sub"><span id="timelock-duration">--</span> unlock delay</div>
-        </div>
+        <div class="stat"><div class="stat-label">Total balance</div><div class="stat-value" id="vault-total">--</div><div class="stat-sub">ETH in vault</div></div>
+        <div class="stat stat-hot"><div class="stat-label">Hot (immediately spendable)</div><div class="stat-value" id="vault-hot">--</div><div class="stat-sub"><span id="vault-spent">--</span> spent this epoch</div></div>
+        <div class="stat stat-cold"><div class="stat-label">Cold (timelocked)</div><div class="stat-value" id="vault-cold">--</div><div class="stat-sub"><span id="timelock-duration">--</span> unlock delay</div></div>
       </div>
       <div class="meta-grid">
         <div><span class="meta-label">Vault:</span> <a id="vault-address" target="_blank" rel="noopener">--</a></div>
@@ -82,109 +37,44 @@
       </div>
     </section>
 
-    <!-- Actions -->
     <section id="actions-section" hidden>
       <div class="grid grid-2">
         <div class="card">
           <h3>Deposit ETH</h3>
           <p class="muted">Send Sepolia ETH into the vault. Anyone can deposit.</p>
-          <div class="input-row">
-            <input type="number" id="deposit-amount" step="0.001" min="0" value="0.05" placeholder="Amount in ETH" />
-            <button id="deposit-btn" class="primary">Deposit</button>
-          </div>
+          <div class="input-row"><input type="number" id="deposit-amount" step="0.001" min="0" value="0.05" placeholder="Amount in ETH" /><button id="deposit-btn" class="primary">Deposit</button></div>
         </div>
         <div class="card">
           <h3>Hot spend</h3>
           <p class="muted">Instant transfer from the rate-limited hot balance. Owner only.</p>
-          <div class="input-row">
-            <input type="text" id="hotspend-to" placeholder="Recipient address (0x...)" />
-          </div>
-          <div class="input-row">
-            <input type="number" id="hotspend-amount" step="0.001" min="0" value="0.01" placeholder="Amount in ETH" />
-            <button id="hotspend-btn" class="primary">Hot Spend</button>
-          </div>
+          <div class="input-row"><input type="text" id="hotspend-to" placeholder="Recipient address (0x...)" /></div>
+          <div class="input-row"><input type="number" id="hotspend-amount" step="0.001" min="0" value="0.01" placeholder="Amount in ETH" /><button id="hotspend-btn" class="primary">Hot Spend</button></div>
         </div>
         <div class="card">
           <h3>Cold withdrawal</h3>
-          <p class="muted">Request a large withdrawal. Starts the timelock -- funds unlock after the delay, OR guardians can bypass with multisig.</p>
-          <div class="input-row">
-            <input type="text" id="coldwithdraw-to" placeholder="Recipient address (0x...)" />
-          </div>
-          <div class="input-row">
-            <input type="number" id="coldwithdraw-amount" step="0.001" min="0" value="0.1" placeholder="Amount in ETH" />
-            <button id="coldwithdraw-btn" class="primary">Request Withdrawal</button>
-          </div>
+          <p class="muted">Request a large withdrawal. Starts the timelock — funds unlock after the delay, OR guardians can bypass with multisig.</p>
+          <div class="input-row"><input type="text" id="coldwithdraw-to" placeholder="Recipient address (0x...)" /></div>
+          <div class="input-row"><input type="number" id="coldwithdraw-amount" step="0.001" min="0" value="0.1" placeholder="Amount in ETH" /><button id="coldwithdraw-btn" class="primary">Request Withdrawal</button></div>
         </div>
         <div class="card card-highlight">
           <h3>DeFi: Swap on Uniswap V3</h3>
-          <p class="muted">WETH to USDC swap via Uniswap SwapRouter02. Wraps ETH, approves the router, and swaps -- hot spending counter stays at zero.</p>
-          <div class="input-row">
-            <input type="number" id="swap-amount" step="0.001" min="0" value="0.01" placeholder="Amount in ETH" />
-            <button id="swap-btn" class="primary">Wrap + Swap</button>
-          </div>
-          <p class="muted small">Three transactions: wrap via <code>execute()</code>, approve, swap via <code>execute()</code>.</p>
+          <p class="muted">WETH to USDC swap via Uniswap. Wraps ETH, approves router, swaps — hot counter stays at zero.</p>
+          <div class="input-row"><input type="number" id="swap-amount" step="0.001" min="0" value="0.01" placeholder="Amount in ETH" /><button id="swap-btn" class="primary">Wrap + Swap</button></div>
+          <p class="muted small">Three txs: wrap via <code>execute()</code>, approve, swap via <code>execute()</code>.</p>
         </div>
       </div>
-      <div class="card">
-        <h3>Pending withdrawals</h3>
-        <div id="pending-list"><p class="muted">No pending withdrawals.</p></div>
-      </div>
+      <div class="card"><h3>Pending withdrawals</h3><div id="pending-list"><p class="muted">No pending withdrawals.</p></div></div>
     </section>
 
-    <!-- Activity log -->
     <section id="log-section" class="card" hidden>
-      <div class="log-header">
-        <h3>Activity log</h3>
-        <button id="clear-log" class="ghost small">Clear</button>
-      </div>
+      <div class="log-header"><h3>Activity log</h3><button id="clear-log" class="ghost small">Clear</button></div>
       <div id="log"></div>
     </section>
   </main>
 
-  <footer>
-    <div class="container footer-inner">
-      <a href="https://defire.business/" target="_blank" rel="noopener" class="brand brand-sm">
-        <svg width="20" height="20" viewBox="0 0 76 76" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <defs><linearGradient id="dg2" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#8B5CF6"/><stop offset="50%" stop-color="#6366F1"/><stop offset="100%" stop-color="#3B82F6"/></linearGradient></defs>
-          <path fill="url(#dg2)" d="M16,9.57C16,9.57,54,9,54,9c3.78.01,7.63-.22,10.98,1.85C70.6,14.33,70.97,19.06,71,25v31c-.06,4.7-.49,10.22-4.22,13.57-3.85,3.45-9.93,3.42-14.78,3.43H22c-4.26-.06-7.52-.22-10.87-3.28C7.37,66.29,7.06,62.76,7,58V25c.04-7.86,1.03-12.3,9-15.43ZM28,52c4.57,0,14.28.81,17.87-1.74,5.97-4.24,5.72-18.5-.91-22.09C41.69,26.41,32.06,27,28,27v4h4c0,5.91,1.79,13.73-4,17v4ZM37,31c1.93.23,3.91.27,5.33,1.74,2.28,2.16,2.4,11.27,0,13.27-1.42,1.09-3.69.95-5.33,1V31Z"/>
-        </svg>
-        <span>DeFiRe Labs</span>
-      </a>
-      <span class="muted small">ERC-8300 reference implementation. Sepolia testnet — no real funds at risk.</span>
-      <a href="https://github.com/ethereum/ERCs/pull/1703" target="_blank" rel="noopener" class="muted small">PR #1703</a>
-    </div>
-  </footer>
+  <footer id="site-footer"></footer>
 
   <script type="importmap">{"imports":{"ethers":"https://esm.sh/ethers@6.13.4"}}</script>
   <script type="module" src="app.js"></script>
-  <script>
-    // Language dropdown logic
-    const langBtn = document.getElementById('lang-btn');
-    const langMenu = document.getElementById('lang-menu');
-    const docsLink = document.getElementById('docs-link');
-    let currentLang = localStorage.getItem('vault-lang') || 'en';
-
-    function updateLang(lang) {
-      currentLang = lang;
-      localStorage.setItem('vault-lang', lang);
-      langBtn.innerHTML = lang.toUpperCase() + ' <span class="caret">&#9662;</span>';
-      docsLink.href = lang === 'es' ? 'docs-es.html' : 'docs-en.html';
-      langMenu.querySelectorAll('.lang-option').forEach(o => {
-        o.classList.toggle('active', o.dataset.lang === lang);
-      });
-      langMenu.classList.remove('open');
-    }
-
-    langBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      langMenu.classList.toggle('open');
-    });
-    langMenu.querySelectorAll('.lang-option').forEach(o => {
-      o.addEventListener('click', () => updateLang(o.dataset.lang));
-    });
-    document.addEventListener('click', () => langMenu.classList.remove('open'));
-
-    updateLang(currentLang);
-  </script>
 </body>
 </html>
