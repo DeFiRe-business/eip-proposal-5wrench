@@ -5,9 +5,9 @@
 //  exercise the vault's core flows: deposit, hot spend, cold withdrawal, and
 //  the flagship DeFi swap on Uniswap V3 via execute().
 //
-//  The vault owner must be the currently-connected MetaMask account. Other
-//  actions (guardian approve, pause, unpause) can be simulated with
-//  `cast send --private-key <known-test-key>` — see demo/README.md.
+//  Supports custom vault addresses: if the visitor has deployed their own
+//  vault, they can paste its address in the input field to use it instead
+//  of the default DeFiRe Labs vault.
 // ════════════════════════════════════════════════════════════════════════════
 
 import { ethers } from "ethers";
@@ -27,6 +27,7 @@ let vault = null;        // ethers.Contract, read-only
 let vaultWithSigner = null; // ethers.Contract, for transactions
 let userAddress = null;  // Currently-connected EOA
 let isOwner = false;     // Is connected address the vault owner?
+let activeVaultAddress = null; // The vault address actually in use
 
 // ────────────────────────────────────────────────────────────────────────────
 //  DOM helpers
@@ -73,6 +74,39 @@ function etherscan(path) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  Custom vault address
+// ────────────────────────────────────────────────────────────────────────────
+
+function getActiveVaultAddress() {
+  const customInput = $("custom-vault");
+  const statusEl = $("custom-vault-status");
+  if (!customInput) return config.vault;
+
+  const value = customInput.value.trim();
+
+  if (!value) {
+    // Empty — use default
+    statusEl.textContent = "";
+    customInput.style.borderColor = "";
+    return config.vault;
+  }
+
+  if (ethers.isAddress(value)) {
+    // Valid address — use custom
+    statusEl.textContent = "✓ Custom vault";
+    statusEl.style.color = "var(--success)";
+    customInput.style.borderColor = "var(--success)";
+    return ethers.getAddress(value); // checksummed
+  }
+
+  // Invalid
+  statusEl.textContent = "✗ Invalid address";
+  statusEl.style.color = "var(--danger)";
+  customInput.style.borderColor = "var(--danger)";
+  return null;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Bootstrap
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -83,7 +117,7 @@ async function loadConfig() {
   if (config.vault === ethers.ZeroAddress || !config.vault) {
     throw new Error("Vault address not set in deployment.sepolia.json. Deploy the vault first with `forge script script/Deploy.s.sol`.");
   }
-  log(`Config loaded. Vault: ${config.vault}`, "info");
+  log(`Config loaded. Default vault: ${config.vault}`, "info");
 }
 
 async function connect() {
@@ -91,6 +125,15 @@ async function connect() {
     toast("MetaMask not detected. Install it from metamask.io", "error");
     return;
   }
+
+  // Resolve vault address (custom or default)
+  activeVaultAddress = getActiveVaultAddress();
+  if (!activeVaultAddress) {
+    toast("Invalid custom vault address", "error");
+    return;
+  }
+
+  const isCustom = activeVaultAddress.toLowerCase() !== config.vault.toLowerCase();
 
   try {
     // Request accounts
@@ -118,22 +161,35 @@ async function connect() {
     signer   = await provider.getSigner();
     userAddress = await signer.getAddress();
 
-    vault           = new ethers.Contract(config.vault, VAULT_ABI, provider);
-    vaultWithSigner = new ethers.Contract(config.vault, VAULT_ABI, signer);
+    vault           = new ethers.Contract(activeVaultAddress, VAULT_ABI, provider);
+    vaultWithSigner = new ethers.Contract(activeVaultAddress, VAULT_ABI, signer);
+
+    // Verify the contract exists by calling a view function
+    try {
+      await vault.owner();
+    } catch (err) {
+      toast("No vault found at this address. Is it deployed on Sepolia?", "error");
+      log(`No vault contract at ${shorten(activeVaultAddress)}. Check the address.`, "error");
+      return;
+    }
 
     // Check ownership
     const vaultOwner = await vault.owner();
     isOwner = vaultOwner.toLowerCase() === userAddress.toLowerCase();
 
-    renderConnection(vaultOwner);
+    renderConnection(vaultOwner, isCustom);
     await refreshAll();
     subscribeToEvents();
+
+    // Disable custom vault input after connecting (reconnect = reload)
+    const customInput = $("custom-vault");
+    if (customInput) customInput.disabled = true;
 
     // React to account/chain changes
     window.ethereum.on("accountsChanged", () => location.reload());
     window.ethereum.on("chainChanged",    () => location.reload());
 
-    log(`Connected as ${shorten(userAddress)}${isOwner ? " (vault owner)" : " (not owner)"}`, "success");
+    log(`Connected as ${shorten(userAddress)}${isOwner ? " (vault owner)" : " (not owner)"}${isCustom ? " — using custom vault" : ""}`, "success");
 
   } catch (err) {
     console.error(err);
@@ -142,13 +198,15 @@ async function connect() {
   }
 }
 
-function renderConnection(vaultOwner) {
+function renderConnection(vaultOwner, isCustom) {
   $("connect-btn").textContent = shorten(userAddress);
   $("connect-btn").disabled = true;
 
+  const customLabel = isCustom ? ` (custom vault <strong>${shorten(activeVaultAddress)}</strong>)` : "";
+
   const banner = isOwner
-    ? `<p>✅ Connected as <strong>${shorten(userAddress)}</strong> — vault owner. All actions enabled.</p>`
-    : `<p>⚠️ Connected as <strong>${shorten(userAddress)}</strong>. This is <em>not</em> the vault owner (${shorten(vaultOwner)}). Only deposits are available.</p>`;
+    ? `<p>✅ Connected as <strong>${shorten(userAddress)}</strong> — vault owner${customLabel}. All actions enabled.</p>`
+    : `<p>⚠️ Connected as <strong>${shorten(userAddress)}</strong>. This is <em>not</em> the vault owner (${shorten(vaultOwner)})${customLabel}. Only deposits are available.</p>`;
 
   $("wallet-status").innerHTML = banner;
 
@@ -197,8 +255,8 @@ async function refreshAll() {
     $("timelock-duration").textContent = formatSeconds(timelock);
 
     const linkEl = $("vault-address");
-    linkEl.href = etherscan(`address/${config.vault}`);
-    linkEl.textContent = shorten(config.vault);
+    linkEl.href = etherscan(`address/${activeVaultAddress}`);
+    linkEl.textContent = shorten(activeVaultAddress);
 
     $("vault-owner").innerHTML = `<a href="${etherscan(`address/${vaultOwner}`)}" target="_blank">${shorten(vaultOwner)}</a>`;
     $("vault-guardians").textContent = guardianCount.toString();
@@ -224,7 +282,6 @@ async function refreshPendingWithdrawals(nextId) {
   const items = [];
   for (let i = 0; i < nextId; i++) {
     const req = await vault.getWithdrawalRequest(i);
-    // req: [token, to, amount, unlockTime, executed, cancelled, approvalCount]
     if (req.executed || req.cancelled) continue;
 
     const unlockTime = Number(req.unlockTime);
@@ -266,7 +323,6 @@ async function refreshPendingWithdrawals(nextId) {
     ? items.join("")
     : `<p class="muted">No pending withdrawals.</p>`;
 
-  // Wire up action buttons
   container.querySelectorAll("[data-execute]").forEach(btn =>
     btn.addEventListener("click", () => executeWithdrawal(btn.dataset.execute)));
   container.querySelectorAll("[data-cancel]").forEach(btn =>
@@ -357,23 +413,23 @@ async function swapOnUniswap() {
   const usdc      = config.usdc;
   const router    = config.uniswapRouter;
 
-  // Step 1: Check WETH whitelist — whitelist via timelocked flow if not yet set
+  // Step 1: Check WETH whitelist
   const wethWhitelisted = await vault.isWhitelisted(weth);
   if (!wethWhitelisted) {
-    log("WETH is not whitelisted yet. Whitelist requires timelock. See demo/README.md for how to complete this once. Aborting swap.", "error");
-    toast("WETH not whitelisted — see README for one-time setup", "error");
+    log("WETH is not whitelisted yet. Whitelist requires timelock. See docs for one-time setup. Aborting swap.", "error");
+    toast("WETH not whitelisted — see docs for setup", "error");
     return;
   }
 
   // Step 2: Same for router
   const routerWhitelisted = await vault.isWhitelisted(router);
   if (!routerWhitelisted) {
-    log("Uniswap router is not whitelisted yet. See demo/README.md for how to complete this once. Aborting swap.", "error");
-    toast("Router not whitelisted — see README for one-time setup", "error");
+    log("Uniswap router is not whitelisted yet. See docs for one-time setup. Aborting swap.", "error");
+    toast("Router not whitelisted — see docs for setup", "error");
     return;
   }
 
-  // Step 3: Wrap ETH into WETH (via execute, no hot budget consumed)
+  // Step 3: Wrap ETH into WETH
   log(`Step 1/3: wrap ${amountStr} ETH → WETH via execute()`, "info");
   const wethIface = new ethers.Interface(WETH_ABI);
   const depositData = wethIface.encodeFunctionData("deposit", []);
@@ -389,16 +445,16 @@ async function swapOnUniswap() {
     `Approve router ${amountStr} WETH`
   );
 
-  // Step 5: Execute the swap via execute()
+  // Step 5: Execute the swap
   log("Step 3/3: swap WETH → USDC via Uniswap V3", "info");
   const routerIface = new ethers.Interface(UNISWAP_ROUTER_ABI);
   const swapData = routerIface.encodeFunctionData("exactInputSingle", [{
     tokenIn:           weth,
     tokenOut:          usdc,
-    fee:               3000,              // 0.3%
-    recipient:         config.vault,      // vault retains custody
+    fee:               3000,
+    recipient:         activeVaultAddress,
     amountIn:          amountWei,
-    amountOutMinimum:  0,                 // DEMO ONLY — set proper slippage in prod!
+    amountOutMinimum:  0,
     sqrtPriceLimitX96: 0
   }]);
 
@@ -408,9 +464,8 @@ async function swapOnUniswap() {
       `Swap ${amountStr} WETH → USDC`
     );
 
-    // Check USDC balance
     const usdcContract = new ethers.Contract(usdc, ERC20_ABI, provider);
-    const usdcBalance = await usdcContract.balanceOf(config.vault);
+    const usdcBalance = await usdcContract.balanceOf(activeVaultAddress);
     const decimals = await usdcContract.decimals();
     log(`✨ Vault now holds ${ethers.formatUnits(usdcBalance, decimals)} USDC`, "success");
   } catch (err) {
@@ -445,6 +500,12 @@ async function init() {
   } catch (err) {
     $("wallet-status").innerHTML = `<p style="color: var(--danger);">${err.message}</p>`;
     return;
+  }
+
+  // Live validation on custom vault input
+  const customInput = $("custom-vault");
+  if (customInput) {
+    customInput.addEventListener("input", getActiveVaultAddress);
   }
 
   $("connect-btn").addEventListener("click",     connect);

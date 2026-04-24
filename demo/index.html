@@ -16,6 +16,21 @@
       <p class="subtitle">Live demo on Sepolia — a smart contract wallet that protects against physical coercion through spending limits, timelocks, and multisig.</p>
     </section>
 
+    <!-- Custom vault address -->
+    <section class="card custom-vault-section">
+      <div class="custom-vault-row">
+        <div class="custom-vault-info">
+          <h3>Vault address</h3>
+          <p class="muted small">Deployed your own vault? Paste its address below to use it with this demo. Leave empty to use the default DeFiRe Labs vault.</p>
+        </div>
+        <div class="custom-vault-input">
+          <input type="text" id="custom-vault" placeholder="0x... (optional — leave empty for default)" spellcheck="false" autocomplete="off" />
+          <span class="custom-vault-status" id="custom-vault-status"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Connection status -->
     <section id="connection-section" class="card">
       <div id="wallet-status"><p class="muted">Not connected. Click "Connect MetaMask" to begin.</p></div>
     </section>

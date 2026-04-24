@@ -31,8 +31,8 @@
     <div class="step"><p><span class="step-number">3</span><strong>Sepolia ETH</strong> — gratis en <code>sepoliafaucet.com</code> o <code>cloud.google.com/application/web3/faucet/ethereum/sepolia</code>.</p></div>
 
     <h2>Conectarse</h2>
-    <div class="step"><p><span class="step-number">4</span>Abre la <a href="index.html">demo</a> y haz clic en <strong>"Connect MetaMask"</strong>. Cambia a Sepolia automaticamente.</p></div>
-    <div class="step"><p><span class="step-number">5</span>El banner indica si eres el <strong>vault owner</strong> (acceso completo) o <strong>visitante</strong> (solo depositar).</p></div>
+    <div class="step"><p><span class="step-number">4</span>Abre la <a href="index.html">demo</a>. Si desplegaste tu propio vault, pega su direccion en el campo <strong>"Vault address"</strong> de la parte superior. Dejalo vacio para usar el vault por defecto de DeFiRe Labs.</p></div>
+    <div class="step"><p><span class="step-number">5</span>Haz clic en <strong>"Connect MetaMask"</strong>. Cambia a Sepolia automaticamente. El banner indica si eres el <strong>vault owner</strong> (acceso completo) o <strong>visitante</strong> (solo depositar).</p></div>
 
     <h2>Dashboard</h2>
     <ul>
@@ -68,7 +68,7 @@
     </div>
 
     <h2>Despliega tu propio vault</h2>
-    <p>Puedes desplegar tu propia instancia en Sepolia en unos pocos pasos. Necesitas <a href="https://book.getfoundry.sh/" target="_blank" rel="noopener">Foundry</a> instalado y un RPC Sepolia gratuito de Alchemy o Infura.</p>
+    <p>Puedes desplegar tu propia instancia en Sepolia y probarlo como owner usando esta misma demo. Necesitas <a href="https://book.getfoundry.sh/" target="_blank" rel="noopener">Foundry</a> instalado y un RPC Sepolia gratuito de Alchemy o Infura.</p>
     <div class="step">
       <p><span class="step-number">1</span><strong>Clonar y configurar</strong></p>
       <pre><code>git clone https://github.com/DeFiRe-business/eip-proposal-5wrench
@@ -84,7 +84,7 @@ forge script script/Deploy.s.sol:Deploy \
   --broadcast \
   --verify \
   --etherscan-api-key $ETHERSCAN_API_KEY</code></pre>
-      <p>El script muestra la direccion del vault desplegado y un enlace a Etherscan. Copia la direccion en <code>demo/deployment.sepolia.json</code> para conectar el frontend a tu vault.</p>
+      <p>El script muestra la direccion del vault desplegado y un enlace a Etherscan.</p>
     </div>
     <div class="step">
       <p><span class="step-number">3</span><strong>Fondear y hacer whitelist</strong></p>
@@ -110,10 +110,8 @@ cast send $VAULT "executeWhitelistChange(address)" \
   --rpc-url $SEPOLIA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY</code></pre>
     </div>
     <div class="step">
-      <p><span class="step-number">4</span><strong>Lanzar la demo</strong></p>
-      <pre><code>cd demo
-python -m http.server 8000</code></pre>
-      <p>Abre <code>http://localhost:8000</code> y conecta MetaMask.</p>
+      <p><span class="step-number">4</span><strong>Usarlo en la demo</strong></p>
+      <p>Ve a la <a href="index.html">pagina de demo</a> y pega la direccion de tu vault en el campo <strong>"Vault address"</strong> de la parte superior. Luego haz clic en <strong>"Connect MetaMask"</strong> con la misma cuenta que configuraste como <code>VAULT_OWNER</code>. Seras reconocido como owner del vault con acceso completo a todas las acciones.</p>
     </div>
 
     <h2>Modelo de seguridad</h2>
