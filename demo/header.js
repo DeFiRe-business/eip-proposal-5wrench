@@ -24,7 +24,7 @@ const DEFIRE_LOGO = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX
         <span>DeFiRe Labs</span>
       </a>
       <nav class="header-nav">
-        <span class="erc-badge">ERC-8300</span>
+        <span class="erc-badge">ERC-8238</span>
         <a href="index.html" class="nav-link ${isDemo ? 'nav-active' : ''}">Demo</a>
         <a href="${docsHref()}" class="nav-link ${isDocs ? 'nav-active' : ''}" id="docs-link">Docs</a>
         <a href="https://github.com/DeFiRe-business/eip-proposal-5wrench" target="_blank" rel="noopener" class="nav-link">GitHub</a>
@@ -47,7 +47,7 @@ const DEFIRE_LOGO = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX
         <img src="${DEFIRE_LOGO}" alt="DeFiRe Labs" class="brand-icon brand-icon-sm" />
         <span>DeFiRe Labs</span>
       </a>
-      <span class="muted small">ERC-8300 reference implementation &middot; Sepolia testnet</span>
+      <span class="muted small">ERC-8238 reference implementation &middot; Sepolia testnet</span>
       <a href="https://github.com/ethereum/ERCs/pull/1703" target="_blank" rel="noopener" class="muted small">PR #1703</a>
     </div>
   `;
