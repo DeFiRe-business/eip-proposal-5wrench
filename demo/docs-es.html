@@ -67,6 +67,55 @@
       <div class="callout"><strong>Clave:</strong> Las operaciones DeFi via <code>execute()</code> son conservadoras de valor — no consumen spending limit. Solo <code>hotSpend()</code> consume budget.</div>
     </div>
 
+    <h2>Despliega tu propio vault</h2>
+    <p>Puedes desplegar tu propia instancia en Sepolia en unos pocos pasos. Necesitas <a href="https://book.getfoundry.sh/" target="_blank" rel="noopener">Foundry</a> instalado y un RPC Sepolia gratuito de Alchemy o Infura.</p>
+    <div class="step">
+      <p><span class="step-number">1</span><strong>Clonar y configurar</strong></p>
+      <pre><code>git clone https://github.com/DeFiRe-business/eip-proposal-5wrench
+cd eip-proposal-5wrench
+cp .env.example .env</code></pre>
+      <p>Edita <code>.env</code> y rellena <code>SEPOLIA_RPC_URL</code>, <code>DEPLOYER_PRIVATE_KEY</code> (usa una wallet desechable, no tu key principal), <code>VAULT_OWNER</code> (tu direccion de MetaMask) y <code>ETHERSCAN_API_KEY</code> (gratis en etherscan.io).</p>
+    </div>
+    <div class="step">
+      <p><span class="step-number">2</span><strong>Desplegar y verificar</strong></p>
+      <pre><code>source .env
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url $SEPOLIA_RPC_URL \
+  --broadcast \
+  --verify \
+  --etherscan-api-key $ETHERSCAN_API_KEY</code></pre>
+      <p>El script muestra la direccion del vault desplegado y un enlace a Etherscan. Copia la direccion en <code>demo/deployment.sepolia.json</code> para conectar el frontend a tu vault.</p>
+    </div>
+    <div class="step">
+      <p><span class="step-number">3</span><strong>Fondear y hacer whitelist</strong></p>
+      <p>Envia Sepolia ETH a la direccion del vault. Luego haz whitelist de WETH y el router de Uniswap (necesario para la demo del swap):</p>
+      <pre><code>VAULT=0xTuDireccionDelVault
+
+# Programar whitelist (sujeto a timelock)
+cast send $VAULT "setWhitelistedTarget(address,bool)" \
+  0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14 true \
+  --rpc-url $SEPOLIA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+cast send $VAULT "setWhitelistedTarget(address,bool)" \
+  0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E true \
+  --rpc-url $SEPOLIA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+# Esperar a que expire el timelock, luego ejecutar
+cast send $VAULT "executeWhitelistChange(address)" \
+  0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14 \
+  --rpc-url $SEPOLIA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+cast send $VAULT "executeWhitelistChange(address)" \
+  0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E \
+  --rpc-url $SEPOLIA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY</code></pre>
+    </div>
+    <div class="step">
+      <p><span class="step-number">4</span><strong>Lanzar la demo</strong></p>
+      <pre><code>cd demo
+python -m http.server 8000</code></pre>
+      <p>Abre <code>http://localhost:8000</code> y conecta MetaMask.</p>
+    </div>
+
     <h2>Modelo de seguridad</h2>
     <h3>Bajo coercion</h3>
     <p>El atacante solo puede extraer el hot balance. El resto esta bloqueado con timelock. Verificable on-chain. La cuenta atras da tiempo a los guardianes para cancelar.</p>
@@ -86,7 +135,6 @@
     <h3>Dinero real?</h3><p>No. Solo testnet Sepolia.</p>
     <h3>"ExceedsColdBalance"?</h3><p>Balance total menor que spending limit — todo esta en hot. Deposita mas.</p>
     <h3>El swap falla?</h3><p>El pool de Sepolia puede tener poca liquidez. El wrap demuestra el mecanismo.</p>
-    <h3>Puedo desplegar el mio?</h3><p>Si. Codigo y scripts en el repo de GitHub. Necesitas Foundry + RPC Sepolia.</p>
   </div>
 
   <footer id="site-footer"></footer>

@@ -93,7 +93,71 @@ The reference implementation is deployed and verified on Sepolia:
 - **Config:** 0.005 ETH/day hot limit, 5-min timelock, 2-of-3 multisig
 - **Proven flows:** deposit, hot spend, cold withdrawal + execute, Uniswap V3 WETH→USDC swap via `execute()`
 
-See [`demo/README.md`](./demo/README.md) for full deployment and demo instructions.
+## Deploy your own vault
+
+You need [Foundry](https://book.getfoundry.sh/) installed and a free Sepolia RPC (Alchemy, Infura, or QuickNode).
+
+**1. Clone and configure**
+
+```bash
+git clone https://github.com/DeFiRe-business/eip-proposal-5wrench
+cd eip-proposal-5wrench
+cp .env.example .env
+```
+
+Edit `.env` and fill in:
+- `SEPOLIA_RPC_URL` — your Sepolia RPC endpoint
+- `DEPLOYER_PRIVATE_KEY` — a burner wallet key (never your main key)
+- `VAULT_OWNER` — your MetaMask address (will own the vault)
+- `ETHERSCAN_API_KEY` — free at [etherscan.io/myapikey](https://etherscan.io/myapikey)
+
+**2. Deploy and verify**
+
+```bash
+source .env
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url $SEPOLIA_RPC_URL \
+  --broadcast \
+  --verify \
+  --etherscan-api-key $ETHERSCAN_API_KEY
+```
+
+Copy the deployed vault address into `demo/deployment.sepolia.json`.
+
+**3. Fund the vault and whitelist targets**
+
+Send Sepolia ETH to the vault address, then whitelist WETH and Uniswap SwapRouter02 for the DeFi demo:
+
+```bash
+VAULT=0xYourVaultAddress
+
+# Schedule whitelist additions (subject to timelock)
+cast send $VAULT "setWhitelistedTarget(address,bool)" \
+  0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14 true \
+  --rpc-url $SEPOLIA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+cast send $VAULT "setWhitelistedTarget(address,bool)" \
+  0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E true \
+  --rpc-url $SEPOLIA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+# Wait for the timelock to expire, then execute
+cast send $VAULT "executeWhitelistChange(address)" \
+  0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14 \
+  --rpc-url $SEPOLIA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+cast send $VAULT "executeWhitelistChange(address)" \
+  0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E \
+  --rpc-url $SEPOLIA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+```
+
+**4. Run the demo frontend**
+
+```bash
+cd demo
+python -m http.server 8000
+```
+
+Open `http://localhost:8000` and connect MetaMask.
 
 ## Key design decisions
 
