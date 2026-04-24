@@ -1,5 +1,5 @@
 ---
-eip: TBD
+eip: 8238
 title: Coercion-Resistant Vault Standard
 description: A smart contract wallet standard with spending limits, timelocks, and multisig to protect against physical coercion attacks
 author: Carlos Mayorga (@cmayorga)
