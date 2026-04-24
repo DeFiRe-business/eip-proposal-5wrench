@@ -3,7 +3,7 @@ eip: 8238
 title: Coercion-Resistant Vault Standard
 description: A smart contract wallet standard with spending limits, timelocks, and multisig to protect against physical coercion attacks
 author: Carlos Mayorga (@cmayorga)
-discussions-to: https://ethereum-magicians.org/t/erc-coercion-resistant-vault-spending-limits-timelock-multisig-against-5-wrench-attacks/28130
+discussions-to: https://ethereum-magicians.org/t/erc-8238-coercion-resistant-vault/28130
 status: Draft
 type: Standards Track
 category: ERC
@@ -983,7 +983,7 @@ specification:
 - **Harish Kumar Gunjalli** ([@HarishKumarGunjalli](https://ethereum-magicians.org/u/HarishKumarGunjalli)) —
   identified the guardian-removal-below-threshold invariant, raised the concurrent
   withdrawal DoS concern, surfaced the epoch duration attack vector, and proposed the
-  emergency pause mechanism. [Review thread](https://ethereum-magicians.org/t/erc-coercion-resistant-vault-spending-limits-timelock-multisig-against-5-wrench-attacks/28130/2).
+  emergency pause mechanism. [Review thread](https://ethereum-magicians.org/t/erc-8238-coercion-resistant-vault/28130/2).
 
 ## Copyright
 

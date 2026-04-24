@@ -1,9 +1,11 @@
-# ERC: Coercion-Resistant Vault Standard
+# ERC-8238: Coercion-Resistant Vault
 
 > Protecting crypto holders from physical coercion attacks ("$5 wrench attacks") through smart contract-enforced spending limits, timelocks, and multisig.
 
-[![Status](https://img.shields.io/badge/EIP_Status-Pre--Draft-yellow)]()
+[![Status](https://img.shields.io/badge/EIP_Status-Draft-blue)](https://github.com/ethereum/ERCs/pull/1703)
 [![License: CC0-1.0](https://img.shields.io/badge/License-CC0_1.0-lightgrey.svg)](http://creativecommons.org/publicdomain/zero/1.0/)
+
+**[Live demo](https://defire-business.github.io/eip-proposal-5wrench/demo/)** · **[ERC PR #1703](https://github.com/ethereum/ERCs/pull/1703)** · **[Ethereum Magicians](https://ethereum-magicians.org/t/erc-8238-coercion-resistant-vault/28130)** · **[Sepolia deployment](https://sepolia.etherscan.io/address/0x7B36499A730341c7BdaA6A603c525d54416cD0Ab)**
 
 ## The problem
 
@@ -46,11 +48,13 @@ A smart contract wallet standard that works like a **bank vault with delayed ope
 
 | Path | Description |
 |---|---|
-| [`ERC-coercion-resistant-vault.md`](./ERC-coercion-resistant-vault.md) | Full ERC proposal draft following EIP-1 template |
+| [`ERC-coercion-resistant-vault.md`](./ERC-coercion-resistant-vault.md) | Full ERC-8238 proposal draft following EIP-1 template |
 | [`src/CoercionResistantVault.sol`](./src/CoercionResistantVault.sol) | Reference implementation in Solidity 0.8.20 |
-| [`test/`](./test/) | Foundry test suite — unit tests + Sepolia fork integration |
+| [`test/`](./test/) | Foundry test suite — 71 tests, unit + Sepolia fork integration |
+| [`script/Deploy.s.sol`](./script/Deploy.s.sol) | Foundry deployment script with Etherscan verification |
+| [`demo/`](./demo/) | Interactive frontend demo (MetaMask + Uniswap V3 swap) |
 | [`foundry.toml`](./foundry.toml) | Foundry project configuration |
-| [`.env.example`](./.env.example) | Environment template (Sepolia RPC, Uniswap addresses) |
+| [`.env.example`](./.env.example) | Environment template (Sepolia RPC, Uniswap addresses, Etherscan) |
 
 ## Architecture
 
@@ -79,6 +83,17 @@ forge test --no-match-contract DeFiFork -vv
 # Run full suite including Sepolia fork (requires SEPOLIA_RPC_URL in .env)
 cp .env.example .env && source .env && forge test -vvv
 ```
+
+## Sepolia deployment
+
+The reference implementation is deployed and verified on Sepolia:
+
+- **Vault:** [`0x7B36499A730341c7BdaA6A603c525d54416cD0Ab`](https://sepolia.etherscan.io/address/0x7B36499A730341c7BdaA6A603c525d54416cD0Ab)
+- **Owner:** `0x4BcB390B3306d31B8a7820b65D130c94e6E09A91`
+- **Config:** 0.005 ETH/day hot limit, 5-min timelock, 2-of-3 multisig
+- **Proven flows:** deposit, hot spend, cold withdrawal + execute, Uniswap V3 WETH→USDC swap via `execute()`
+
+See [`demo/README.md`](./demo/README.md) for full deployment and demo instructions.
 
 ## Key design decisions
 
@@ -144,13 +159,13 @@ All vault security rules (spending limits, timelocks, whitelist, pause state) ap
 
 ## Contributing
 
-This is a pre-draft proposal. Feedback, issues, and PRs are welcome.
+Feedback, issues, and PRs are welcome. The ERC is currently in Draft status — community review strengthens the specification.
 
 If you've been affected by a physical attack or know someone who has, this standard is being built for you. Every improvement to the threat model helps.
 
 ## Author
 
-- [@cmayorga](https://github.com/cmayorga) — [DeFiRe](https://github.com/DeFiRe-business)
+- [Carlos Mayorga](https://github.com/cmayorga) — [DeFiRe Labs](https://defire.business/)
 
 ## License
 
